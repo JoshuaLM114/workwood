@@ -1,0 +1,16 @@
+# ---------------------------------------------------------------------------
+# workwood — a global CLI for orchestrating git worktrees across many repos.
+#
+# Unlike a mediator repo, workwood is installed once and operates on PROJECTS
+# you register in ~/.workwood/config.yaml. Each project is a team "super-repo"
+# holding a workwood.yaml (its repo definitions) plus super-features/<name>.yaml
+# manifests; your registry entry records where YOU keep the base clones and
+# feature worktrees on disk.
+#
+# This mise file only pins the Go toolchain used to build the binary:
+#   go build -o bin/workwood .
+#   go install .            # drops it on $PATH as `workwood`
+# ---------------------------------------------------------------------------
+
+[tools]
+go = "1.26"

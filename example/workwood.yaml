@@ -1,0 +1,25 @@
+# Example project definition. This file lives at the ROOT of a team "super-repo"
+# (committed + shared); `workwood init` reads it. Each developer registers the
+# super-repo in their own ~/.workwood/config.yaml, choosing where THEY keep base
+# clones and feature worktrees on disk.
+#
+# Schema:
+#   org   — default GitHub owner for entries that don't set their own `url`
+#   host  — optional; informational (cloning goes through `gh repo clone`)
+#   repos[].name           — directory name under main_dir and the repo name
+#   repos[].default_branch — branch a base clone is parked on (and the default a
+#                            new feature branch is cut from)
+#   repos[].url            — optional; overrides `<org>/<name>` (a different owner)
+
+org: my-org
+
+repos:
+  - name: api
+    default_branch: main
+  - name: web
+    default_branch: main
+  - name: db
+    default_branch: main
+  - name: shared-lib
+    default_branch: master
+    url: another-org/shared-lib

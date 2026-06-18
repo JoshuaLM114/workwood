@@ -1,0 +1,7 @@
+# Compiled workwood binary
+/bin/
+
+# Local-only mise overrides (never committed)
+mise.local.toml
+.mise.local.toml
+.mise/

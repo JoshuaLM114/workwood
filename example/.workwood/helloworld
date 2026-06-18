@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Example CHILD script — lives in a component repo at .workwood/helloworld.
+#
+# The `helloworld` plugin's PARENT prints "hello " then runs this child, which
+# prints the rest of the line. The simplest possible demonstration of the
+# parent-composes-children model. `workwood compose helloworld <feature> --init`
+# generates exactly this file in each repo.
+echo "world"

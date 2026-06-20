@@ -3,8 +3,6 @@ package config
 import (
 	"path/filepath"
 	"testing"
-
-	"github.com/JoshuaLM114/workwood/targets"
 )
 
 func TestProjectStateRoundTrip(t *testing.T) {
@@ -20,12 +18,8 @@ func TestProjectStateRoundTrip(t *testing.T) {
 
 	st.Project = "proj-uuid"
 	st.Name = "My Project"
-	st.MainDir = "/m"
-	st.FeaturesDir = "/f"
 	st.EnsureFeature("feat-uuid", "add-login")
-	if !st.AddTarget("feat-uuid", "api", targets.Target{Source: targets.SourceWorktree}) {
-		t.Fatal("AddTarget should report newly added")
-	}
+	st.SetWorkingSet("feat-uuid", map[string]string{"api": "/abs/api", "web": "/abs/web"})
 	if err := SaveState(path, st); err != nil {
 		t.Fatal(err)
 	}
@@ -34,15 +28,16 @@ func TestProjectStateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Project != "proj-uuid" || got.Name != "My Project" || got.MainDir != "/m" {
+	if got.Project != "proj-uuid" || got.Name != "My Project" {
 		t.Fatalf("round-trip mismatch: %+v", got)
 	}
 	fs, ok := got.FeatureByUUID("feat-uuid")
 	if !ok || fs.Slug != "add-login" {
 		t.Fatalf("feature not round-tripped: %+v ok=%v", fs, ok)
 	}
-	if len(fs.Targets["api"]) != 1 || fs.Targets["api"][0].Source != targets.SourceWorktree {
-		t.Fatalf("targets not round-tripped: %+v", fs.Targets)
+	ws := got.WorkingSet("feat-uuid")
+	if ws["api"] != "/abs/api" || ws["web"] != "/abs/web" {
+		t.Fatalf("working set not round-tripped: %+v", ws)
 	}
 }
 
@@ -59,30 +54,18 @@ func TestEnsureFeatureIdempotent(t *testing.T) {
 	}
 }
 
-func TestTargetOps(t *testing.T) {
+func TestWorkingSetOps(t *testing.T) {
 	st := &ProjectState{Features: map[string]FeatureState{}}
 	st.EnsureFeature("u", "s")
-	tw := targets.Target{Source: targets.SourceWorktree}
 
-	if !st.AddTarget("u", "api", tw) {
-		t.Fatal("first add should be true")
+	st.SetWorkingSet("u", map[string]string{"api": "/a", "web": "/w"})
+	if got := st.WorkingSet("u"); len(got) != 2 || got["api"] != "/a" {
+		t.Fatalf("working set not set: %+v", got)
 	}
-	if st.AddTarget("u", "api", tw) {
-		t.Fatal("duplicate add should be false")
-	}
-	if len(st.TargetsFor("u", "api")) != 1 {
-		t.Fatalf("want 1 target, got %d", len(st.TargetsFor("u", "api")))
-	}
-	if !st.RemoveTarget("u", "api", tw) {
-		t.Fatal("remove should be true")
-	}
-	if st.RemoveTarget("u", "api", tw) {
-		t.Fatal("second remove should be false")
-	}
-	st.AddTarget("u", "web", tw)
-	st.ClearTarget("u", "web")
-	if len(st.TargetsFor("u", "web")) != 0 {
-		t.Fatal("clear should empty the repo's setups")
+	// Empty set drops the field entirely.
+	st.SetWorkingSet("u", map[string]string{})
+	if st.WorkingSet("u") != nil {
+		t.Fatal("empty working set should be nil")
 	}
 }
 

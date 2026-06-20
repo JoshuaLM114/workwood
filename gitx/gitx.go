@@ -56,6 +56,12 @@ func HasRemoteBranch(repo, branch string) bool {
 	return quiet(repo, "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+branch)
 }
 
+// CurrentBranch returns the short name of the branch checked out at dir (e.g.
+// "main"). Returns "HEAD" for a detached head; errors when dir isn't a git repo.
+func CurrentBranch(dir string) (string, error) {
+	return output(dir, "rev-parse", "--abbrev-ref", "HEAD")
+}
+
 // LocalBranches lists short names of every local branch in repo.
 func LocalBranches(repo string) ([]string, error) {
 	out, err := output(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads")
@@ -162,4 +168,18 @@ func FetchAll(repo string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// FetchAllQuiet is FetchAll with output captured (used by the TUI, which owns the
+// terminal — inherited stdio would corrupt the alt-screen).
+func FetchAllQuiet(repo string) error { return run(repo, "fetch", "--all", "--prune") }
+
+// CloneQuiet clones slug into dest via gh with output captured (for the TUI).
+func CloneQuiet(slug, dest string) error {
+	cmd := exec.Command("gh", "repo", "clone", slug, dest)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh repo clone %s: %w\n%s", slug, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

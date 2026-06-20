@@ -6,31 +6,32 @@ import (
 	"strings"
 
 	"github.com/JoshuaLM114/workwood/i18n"
-	"github.com/JoshuaLM114/workwood/targets"
 	"github.com/JoshuaLM114/workwood/version"
 	"gopkg.in/yaml.v3"
 )
 
 // ProjectState is this developer's workwood-state.yml: the single per-project,
-// never-committed file under $WORKWOOD_DATA/<project-uuid>/. It holds the editable
-// project active_name, optional checkout-path overrides, and one entry per
+// never-committed file at $WORKWOOD_DATA/workwood-state.yml. It holds the editable
+// project active_name, a project-UUID integrity link, and one entry per
 // super-feature (keyed by the feature's UUID) carrying that feature's editable
-// active_name and its personal, additive run-target setups.
+// active_name and its target working set. Checkout paths are not stored here —
+// they're always derived from WORKWOOD_DATA.
 type ProjectState struct {
-	Version     int                     `yaml:"version"`
-	Project     string                  `yaml:"project,omitempty"`      // project UUID (sanity link to workwood.yml)
-	Name        string                  `yaml:"name,omitempty"`         // project active_name (default = slug)
-	MainDir     string                  `yaml:"main_dir,omitempty"`     // override; default <StateDir>/main
-	FeaturesDir string                  `yaml:"features_dir,omitempty"` // override; default <StateDir>/features
-	Features    map[string]FeatureState `yaml:"features,omitempty"`     // keyed by feature UUID
+	Version  int                     `yaml:"version"`
+	Project  string                  `yaml:"project,omitempty"`  // project UUID (sanity link to workwood.yml)
+	Name     string                  `yaml:"name,omitempty"`     // project active_name (default = slug)
+	Features map[string]FeatureState `yaml:"features,omitempty"` // keyed by feature UUID
 }
 
 // FeatureState is one super-feature's local state. Slug caches the immutable
 // original_name so a UUID maps back to its manifest filename without a scan.
+// Targets is this developer's "working set": the enabled targets for the feature,
+// each an editable key → absolute path. (The yaml key is `working_set`, distinct
+// from any earlier `targets:` shape, so old files migrate by simply being ignored.)
 type FeatureState struct {
-	Slug    string                      `yaml:"slug"`
-	Name    string                      `yaml:"name,omitempty"`    // active_name (default = slug)
-	Targets map[string][]targets.Target `yaml:"targets,omitempty"` // per-repo additive setups
+	Slug    string            `yaml:"slug"`
+	Name    string            `yaml:"name,omitempty"` // active_name (default = slug)
+	Targets map[string]string `yaml:"working_set,omitempty"`
 }
 
 // LoadState reads a workwood-state.yml. A missing file yields empty state (not an
@@ -105,40 +106,19 @@ func (s *ProjectState) EnsureFeature(uuid, slug string) bool {
 	return true
 }
 
-// TargetsFor returns a feature's ordered setups for a repo (nil if none).
-func (s *ProjectState) TargetsFor(uuid, repo string) []targets.Target {
-	return s.Features[uuid].Targets[repo]
+// WorkingSet returns a feature's working set (key → absolute path), or nil.
+func (s *ProjectState) WorkingSet(uuid string) map[string]string {
+	return s.Features[uuid].Targets
 }
 
-// AddTarget appends a setup to a repo's additive list, skipping exact duplicates.
-// Returns whether it was newly added.
-func (s *ProjectState) AddTarget(uuid, repo string, t targets.Target) bool {
+// SetWorkingSet replaces a feature's working set, dropping the key when empty so
+// the file stays minimal.
+func (s *ProjectState) SetWorkingSet(uuid string, set map[string]string) {
 	f := s.Features[uuid]
-	m, added := targets.AddTo(f.Targets, repo, t)
-	f.Targets = m
-	s.Features[uuid] = f
-	return added
-}
-
-// RemoveTarget drops a matching setup from a repo's list. Returns whether one
-// was removed.
-func (s *ProjectState) RemoveTarget(uuid, repo string, t targets.Target) bool {
-	f := s.Features[uuid]
-	removed := targets.RemoveFrom(f.Targets, repo, t)
-	if len(f.Targets) == 0 {
-		f.Targets = nil
+	if len(set) == 0 {
+		set = nil
 	}
-	s.Features[uuid] = f
-	return removed
-}
-
-// ClearTarget returns a repo to the automatic default (drops all its setups).
-func (s *ProjectState) ClearTarget(uuid, repo string) {
-	f := s.Features[uuid]
-	delete(f.Targets, repo)
-	if len(f.Targets) == 0 {
-		f.Targets = nil
-	}
+	f.Targets = set
 	s.Features[uuid] = f
 }
 

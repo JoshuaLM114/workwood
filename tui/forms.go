@@ -70,8 +70,9 @@ type addVals struct {
 	omitPrefix bool
 }
 
-// newAddForm builds the "add a worktree" form.
-func newAddForm(repos []string, v *addVals) *huh.Form {
+// newAddForm builds the "add a worktree" form. feature is the super-feature slug,
+// used to preview the exact branch each placement choice produces.
+func newAddForm(repos []string, feature string, v *addVals) *huh.Form {
 	opts := make([]huh.Option[string], 0, len(repos))
 	for _, r := range repos {
 		opts = append(opts, huh.NewOption(r, r))
@@ -92,106 +93,182 @@ func newAddForm(repos []string, v *addVals) *huh.Form {
 				Description(i18n.T("tui.form.wt_branch_desc")).
 				Value(&v.sub).
 				Validate(required),
+			// The branch is normally nested under the super-feature
+			// (<feature>/<name>); a standalone branch drops that prefix. The options
+			// re-render with the actual branch as the name is typed, so it's never
+			// ambiguous what each choice produces.
+			huh.NewSelect[bool]().
+				Key("omitPrefix").
+				Title(i18n.T("tui.form.branch_placement")).
+				Description(i18n.T("tui.form.branch_placement_desc")).
+				OptionsFunc(func() []huh.Option[bool] {
+					name := strings.TrimSpace(v.sub)
+					if name == "" {
+						name = i18n.T("tui.form.name_ph")
+					}
+					return []huh.Option[bool]{
+						huh.NewOption(i18n.T("tui.form.placement_nested", feature+"/"+name), false),
+						huh.NewOption(i18n.T("tui.form.placement_standalone", name), true),
+					}
+				}, &v.sub).
+				Value(&v.omitPrefix),
 			huh.NewInput().
 				Key("from").
 				Title(i18n.T("tui.form.source")).
 				Description(i18n.T("tui.form.source_desc")).
 				Value(&v.from),
-			huh.NewConfirm().
-				Key("omitPrefix").
-				Title(i18n.T("tui.form.strip")).
-				Description(i18n.T("tui.form.strip_desc")).
-				Affirmative(i18n.T("tui.form.strip_yes")).
-				Negative(i18n.T("tui.form.strip_no")).
-				Value(&v.omitPrefix),
 		),
 	)
 }
 
-// targetOption is one choice in the setup picker: a label and the encoded value
-// ("ignore", "main", "worktree", "wt:<manifest-path>", or "custom").
-type targetOption struct {
-	label string
-	value string
+// ---- actions-screen forms -------------------------------------------------
+
+// pathVals binds the add-arbitrary-path form. key is optional (a git path defaults
+// to its branch; otherwise a key is required, validated by the caller).
+type pathVals struct {
+	path string
+	key  string
 }
 
-// setupVals binds a setup picker: a chosen built-in/worktree, or a custom string.
-type setupVals struct {
-	choice string
-	custom string
-}
-
-// setupSelect builds the shared "choose a setup" select.
-func setupSelect(wtOpts []targetOption, v *setupVals) []huh.Field {
-	options := []huh.Option[string]{
-		huh.NewOption(i18n.T("tui.form.setup_worktree_primary"), "worktree"),
-	}
-	for _, o := range wtOpts {
-		options = append(options, huh.NewOption(o.label, o.value))
-	}
-	options = append(options,
-		huh.NewOption(i18n.T("tui.form.setup_main"), "main"),
-		huh.NewOption(i18n.T("tui.form.setup_ignore"), "ignore"),
-		huh.NewOption(i18n.T("tui.form.setup_custom"), "custom"),
+// newAddPathForm builds the "add an arbitrary target path" form.
+func newAddPathForm(v *pathVals) *huh.Form {
+	return form(
+		huh.NewGroup(
+			huh.NewInput().
+				Key("path").
+				Title(i18n.T("tui.form.path")).
+				Description(i18n.T("tui.form.path_desc")).
+				Value(&v.path).
+				Validate(required),
+			huh.NewInput().
+				Key("key").
+				Title(i18n.T("tui.form.key")).
+				Description(i18n.T("tui.form.key_desc")).
+				Value(&v.key),
+		),
 	)
-	if v.choice == "" {
-		v.choice = "worktree"
-	}
-	return []huh.Field{
-		huh.NewSelect[string]().
-			Key("setup").
-			Title(i18n.T("tui.form.setup")).
-			Description(i18n.T("tui.form.setup_desc")).
-			Options(options...).
-			Value(&v.choice),
-		huh.NewInput().
-			Key("custom").
-			Title(i18n.T("tui.form.custom")).
-			Description(i18n.T("tui.form.custom_desc")).
-			Value(&v.custom),
-	}
 }
 
-// newAddTargetForm builds the per-repo "add a setup" form.
-func newAddTargetForm(repo string, wtOpts []targetOption, v *setupVals) *huh.Form {
-	return form(huh.NewGroup(setupSelect(wtOpts, v)...).Title(i18n.T("tui.form.add_setup_for", repo)))
+// keyVals binds the rename-key form.
+type keyVals struct {
+	key string
 }
 
-// bulkVals binds the bulk form: a set of repos plus a setup.
-type bulkVals struct {
-	repos []string
-	setup setupVals
+// newRenameKeyForm builds the "rename a target key" form.
+func newRenameKeyForm(v *keyVals) *huh.Form {
+	return form(
+		huh.NewGroup(
+			huh.NewInput().
+				Key("key").
+				Title(i18n.T("tui.form.key")).
+				Description(i18n.T("tui.form.key_desc")).
+				Value(&v.key).
+				Validate(required),
+		),
+	)
 }
 
-// newBulkTargetForm builds the "add a setup to many repos" form.
-func newBulkTargetForm(repos []string, v *bulkVals) *huh.Form {
-	opts := make([]huh.Option[string], 0, len(repos))
-	for _, r := range repos {
-		opts = append(opts, huh.NewOption(r, r))
+// nameVals binds the save-preset form.
+type nameVals struct {
+	name string
+}
+
+// newSavePresetForm builds the "save target preset" form.
+func newSavePresetForm(v *nameVals) *huh.Form {
+	return form(
+		huh.NewGroup(
+			huh.NewInput().
+				Key("name").
+				Title(i18n.T("tui.form.preset_name")).
+				Value(&v.name).
+				Validate(func(s string) error {
+					s = strings.TrimSpace(s)
+					if s == "" {
+						return i18n.Err("tui.form.required")
+					}
+					if strings.ContainsAny(s, " \t/") {
+						return i18n.Err("tui.form.no_spaces")
+					}
+					return nil
+				}),
+		),
+	)
+}
+
+// repoVals binds the add-repo form (a base repo in workwood.yml).
+type repoVals struct {
+	name   string
+	branch string
+	url    string
+}
+
+// newAddRepoForm builds the "add a base repo" form.
+func newAddRepoForm(v *repoVals) *huh.Form {
+	if v.branch == "" {
+		v.branch = "main"
 	}
-	if v.repos == nil {
-		v.repos = append([]string{}, repos...) // default: all selected
+	return form(
+		huh.NewGroup(
+			huh.NewInput().
+				Key("name").
+				Title(i18n.T("tui.repos.form_name")).
+				Description(i18n.T("tui.repos.form_name_desc")).
+				Value(&v.name).
+				Validate(func(s string) error {
+					s = strings.TrimSpace(s)
+					if s == "" {
+						return i18n.Err("tui.form.required")
+					}
+					if strings.ContainsAny(s, " \t/") {
+						return i18n.Err("tui.form.no_spaces")
+					}
+					return nil
+				}),
+			huh.NewInput().
+				Key("branch").
+				Title(i18n.T("tui.repos.form_branch")).
+				Value(&v.branch),
+			huh.NewInput().
+				Key("url").
+				Title(i18n.T("tui.repos.form_url")).
+				Description(i18n.T("tui.repos.form_url_desc")).
+				Value(&v.url),
+		),
+	)
+}
+
+// selectVals binds a single-choice select form.
+type selectVals struct {
+	choice string
+}
+
+// newSelectForm builds a one-field select (used for load-preset and run-action).
+func newSelectForm(title string, opts []string, v *selectVals) *huh.Form {
+	o := make([]huh.Option[string], 0, len(opts))
+	for _, s := range opts {
+		o = append(o, huh.NewOption(s, s))
 	}
-	fields := []huh.Field{
-		huh.NewMultiSelect[string]().
-			Key("repos").
-			Title(i18n.T("tui.form.repos")).
-			Description(i18n.T("tui.form.repos_desc")).
-			Options(opts...).
-			Value(&v.repos),
+	if v.choice == "" && len(opts) > 0 {
+		v.choice = opts[0]
 	}
-	fields = append(fields, setupSelect(nil, &v.setup)...)
-	return form(huh.NewGroup(fields...).Title(i18n.T("tui.form.bulk_title")))
+	return form(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Key("sel").
+				Title(title).
+				Options(o...).
+				Value(&v.choice),
+		),
+	)
 }
 
 // settingsVals binds the settings form: global app settings (language,
-// update-check) plus this project's local active_name + checkout-path overrides.
+// update-check) plus this project's local active_name. Checkout paths are NOT
+// editable — they're fixed under WORKWOOD_DATA.
 type settingsVals struct {
 	lang        string
 	updateCheck bool
 	name        string // project active_name (local)
-	mainDir     string
-	featuresDir string
 }
 
 // newSettingsForm builds the settings editor. Submitting saves; esc cancels.
@@ -230,16 +307,6 @@ func newSettingsForm(langs []string, v *settingsVals) *huh.Form {
 				Title(i18n.T("tui.settings.active_name")).
 				Description(i18n.T("tui.settings.active_name_desc")).
 				Value(&v.name),
-			huh.NewInput().
-				Key("main").
-				Title(i18n.T("tui.settings.main_dir")).
-				Value(&v.mainDir).
-				Validate(required),
-			huh.NewInput().
-				Key("features").
-				Title(i18n.T("tui.settings.features_dir")).
-				Value(&v.featuresDir).
-				Validate(required),
 		).Title(i18n.T("tui.settings.title")),
 	)
 }

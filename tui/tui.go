@@ -1,15 +1,13 @@
-// Package tui is the Bubble Tea front-end. It opens a picker of the selected
-// project's super-features and drops into a malleable editor where worktrees can
-// be staged for addition/removal and applied as one delta — so editing an
-// existing feature, not just creating one, is the primary flow. Forms use huh.
+// Package tui is the Bubble Tea front-end. It opens a root menu (Super-features ·
+// Edit project · Settings); the super-features page drops into a malleable editor
+// where worktrees can be staged for addition/removal and applied as one delta, and
+// "Edit project" manages the base repos in workwood.yml. Forms use huh.
 //
-// The TUI operates on ONE already-selected project (chosen via -p, cwd, or the
-// default); switching projects is a CLI concern (`workwood project use`).
+// The TUI operates on ONE already-resolved project (chosen via -p or cwd).
 package tui
 
 import (
 	"os"
-	"path/filepath"
 
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
@@ -45,14 +43,19 @@ func tableStyles() table.Styles {
 type screen int
 
 const (
-	screenList screen = iota
+	screenMenu     screen = iota // root navigation menu
+	screenFeatures               // the super-features page
 	screenCreate
 	screenEditor
+	screenActions
+	screenRepos // the "edit project" repo editor
 	screenSettings
 )
 
 type openEditorMsg struct{ feature string }
 type openCreateMsg struct{}
+type openFeaturesMsg struct{}
+type openReposMsg struct{}
 type openSettingsMsg struct{}
 type backMsg struct{}
 type applyDoneMsg struct {
@@ -72,9 +75,12 @@ type Model struct {
 	cfg *config.Config
 	pd  *projectdef.File
 
-	screen screen
-	list   listModel
-	editor *editorModel
+	screen   screen
+	menu     menuModel
+	features *featuresModel
+	editor   *editorModel
+	actions  *actionsModel
+	repos    *reposModel
 
 	createForm *huh.Form
 	createVals createVals
@@ -89,10 +95,9 @@ type Model struct {
 	err           error
 }
 
-// Run starts the TUI for an already-resolved project.
+// Run starts the TUI for an already-resolved project at the root menu.
 func Run(cfg *config.Config, pd *projectdef.File) error {
-	m := &Model{cfg: cfg, pd: pd, screen: screenList}
-	m.list = newListModel(m)
+	m := &Model{cfg: cfg, pd: pd, screen: screenMenu}
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
@@ -104,13 +109,40 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		hw, hh := msg.Width-4, msg.Height-4
-		m.list.list.SetSize(hw, hh)
+		if m.features != nil {
+			m.features.list.SetSize(hw, hh)
+		}
 		if m.editor != nil {
 			m.editor.setSize(hw, hh)
 		}
+		if m.actions != nil {
+			m.actions.setSize(hw, hh)
+		}
+		if m.repos != nil {
+			m.repos.setSize(hw, hh)
+		}
+		return m, nil
+
+	case openFeaturesMsg:
+		m.features = newFeaturesModel(m)
+		m.features.list.SetSize(m.width-4, m.height-4)
+		m.screen = screenFeatures
+		return m, nil
+
+	case openReposMsg:
+		m.repos = newReposModel(m)
+		m.repos.setSize(m.width-4, m.height-4)
+		m.screen = screenRepos
 		return m, nil
 
 	case openCreateMsg:
+		// Block creation until the project's base repos are real clones.
+		if err := superfeature.CheckReposReady(m.cfg); err != nil {
+			if m.features != nil {
+				m.features.status = errStyle.Render(err.Error())
+			}
+			return m, nil
+		}
 		m.createVals = createVals{}
 		m.createForm = newCreateForm(m.cfg, &m.createVals).WithWidth(min(72, m.width-4))
 		m.screen = screenCreate
@@ -132,8 +164,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			lang:        i18n.Lang(),
 			updateCheck: app.UpdateCheckEnabled(),
 			name:        m.cfg.ProjectName,
-			mainDir:     m.cfg.MainDir,
-			featuresDir: m.cfg.FeaturesDir,
 		}
 		m.settingsForm = newSettingsForm(i18n.Supported, &m.settingsVals).WithWidth(min(72, m.width-4))
 		m.screen = screenSettings
@@ -150,11 +180,35 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen = screenEditor
 		return m, nil
 
+	case openActionsMsg:
+		am, err := newActionsModel(m, msg.feature)
+		if err != nil {
+			m.err = err
+			return m, nil
+		}
+		m.actions = am
+		m.actions.setSize(m.width-4, m.height-4)
+		m.screen = screenActions
+		return m, nil
+
 	case backMsg:
-		m.editor = nil
-		m.list = newListModel(m)
-		m.list.list.SetSize(m.width-4, m.height-4)
-		m.screen = screenList
+		// Back walks the screen hierarchy: actions → editor → features → menu, and
+		// repos → menu.
+		switch m.screen {
+		case screenActions:
+			m.actions = nil
+			m.screen = screenEditor
+		case screenEditor:
+			m.editor = nil
+			m.features = newFeaturesModel(m)
+			m.features.list.SetSize(m.width-4, m.height-4)
+			m.screen = screenFeatures
+		case screenRepos:
+			m.repos = nil
+			m.screen = screenMenu
+		default: // screenFeatures and anything else → the root menu
+			m.screen = screenMenu
+		}
 		return m, nil
 	}
 
@@ -167,16 +221,36 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.editor, cmd = m.editor.Update(msg)
 		return m, cmd
-	default:
-		// The list is the root menu: q / esc / ctrl+c all exit (esc only when no
-		// filter is active, so it can still clear/cancel a filter first).
-		if k, ok := msg.(tea.KeyMsg); ok && (k.String() == "q" || k.String() == "esc" || k.String() == "ctrl+c") {
-			if m.list.list.FilterState() == 0 { // not filtering
+	case screenActions:
+		var cmd tea.Cmd
+		m.actions, cmd = m.actions.Update(msg)
+		return m, cmd
+	case screenRepos:
+		var cmd tea.Cmd
+		m.repos, cmd = m.repos.Update(msg)
+		return m, cmd
+	case screenFeatures:
+		// esc → back to the menu; q / ctrl+c quit — but only when no filter is
+		// active, so those keys can still type into / cancel a filter.
+		if k, ok := msg.(tea.KeyMsg); ok && m.features.list.FilterState() == 0 {
+			switch k.String() {
+			case "esc":
+				return m, func() tea.Msg { return backMsg{} }
+			case "q", "ctrl+c":
+				return m, tea.Quit
+			}
+		}
+		cmd := m.features.update(m, msg)
+		return m, cmd
+	default: // screenMenu (root): q / esc / ctrl+c exit
+		if k, ok := msg.(tea.KeyMsg); ok {
+			switch k.String() {
+			case "q", "esc", "ctrl+c":
 				return m, tea.Quit
 			}
 		}
 		var cmd tea.Cmd
-		m.list, cmd = m.list.update(m, msg)
+		m.menu, cmd = m.menu.update(m, msg)
 		return m, cmd
 	}
 }
@@ -188,9 +262,9 @@ func (m *Model) updateCreate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch k.String() {
 		case "ctrl+c":
 			return m, tea.Quit
-		case "esc": // back out to the feature list without creating
+		case "esc": // back out to the features page without creating
 			m.createForm = nil
-			m.screen = screenList
+			m.screen = screenFeatures
 			return m, nil
 		}
 	}
@@ -203,14 +277,26 @@ func (m *Model) updateCreate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		name := m.createVals.name
 		if err := superfeature.Create(m.cfg, name, m.createVals.desc); err != nil {
 			m.err = err
-			m.screen = screenList
+			m.screen = screenFeatures
 			return m, nil
 		}
 		m.createForm = nil
-		return m, func() tea.Msg { return openEditorMsg{feature: name} }
+		// Open the editor synchronously: if we just flipped to a screen whose model
+		// isn't built yet (or left screenCreate with a nil form), the next render
+		// would dereference nil. Build the editor now and switch in one step.
+		ed, err := newEditorModel(m, name)
+		if err != nil {
+			m.err = err
+			m.screen = screenFeatures
+			return m, nil
+		}
+		m.editor = ed
+		m.editor.setSize(m.width-4, m.height-4)
+		m.screen = screenEditor
+		return m, nil
 	case huh.StateAborted:
 		m.createForm = nil
-		m.screen = screenList
+		m.screen = screenFeatures
 		return m, nil
 	}
 	return m, cmd
@@ -223,9 +309,9 @@ func (m *Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch k.String() {
 		case "ctrl+c":
 			return m, tea.Quit
-		case "esc": // cancel — back to the list without saving
+		case "esc": // cancel — back to the menu without saving
 			m.settingsForm = nil
-			m.screen = screenList
+			m.screen = screenMenu
 			return m, nil
 		}
 	}
@@ -244,35 +330,23 @@ func (m *Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = err
 			return m, nil
 		}
-		// Project-local state (active_name + checkout-path overrides).
+		// Project-local state (the active_name; checkout paths aren't editable).
 		st := m.settingsState
 		st.Project = m.cfg.ProjectID
 		st.Name = m.settingsVals.name
-		mainDir := m.settingsVals.mainDir
-		if abs, err := filepath.Abs(mainDir); err == nil {
-			mainDir = abs
-		}
-		featuresDir := m.settingsVals.featuresDir
-		if abs, err := filepath.Abs(featuresDir); err == nil {
-			featuresDir = abs
-		}
-		st.MainDir, st.FeaturesDir = mainDir, featuresDir
 		if err := config.SaveState(m.cfg.StateFile, st); err != nil {
 			m.err = err
 			return m, nil
 		}
-		// Apply immediately: switch language + repoint the active config.
+		// Apply immediately: switch language + update the display name.
 		i18n.Init(m.settingsVals.lang)
-		m.cfg.MainDir, m.cfg.FeaturesDir = mainDir, featuresDir
 		m.cfg.ProjectName = m.settingsVals.name
 		m.settingsForm = nil
-		m.list = newListModel(m)
-		m.list.list.SetSize(m.width-4, m.height-4)
-		m.screen = screenList
+		m.screen = screenMenu
 		return m, nil
 	case huh.StateAborted:
 		m.settingsForm = nil
-		m.screen = screenList
+		m.screen = screenMenu
 		return m, nil
 	}
 	return m, cmd
@@ -287,10 +361,16 @@ func (m *Model) View() string {
 		return docStyle.Render(titleStyle.Render(i18n.T("tui.new_feature")) + "\n\n" + m.createForm.View() + "\n" + helpStyle.Render(i18n.T("tui.form_help")))
 	case screenSettings:
 		return docStyle.Render(titleStyle.Render(i18n.T("tui.settings.title")) + "\n\n" + m.settingsForm.View() + "\n" + helpStyle.Render(i18n.T("tui.form_help")))
+	case screenFeatures:
+		return docStyle.Render(m.features.View())
 	case screenEditor:
 		return m.editor.View()
+	case screenActions:
+		return m.actions.View()
+	case screenRepos:
+		return m.repos.View()
 	default:
-		return docStyle.Render(m.list.View())
+		return m.menu.View(m)
 	}
 }
 

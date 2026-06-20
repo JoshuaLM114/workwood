@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# DEFAULT workwood ACTION — tmux. Boots a tmux session with one window per selected
+# target, cd'd into its path. Targets come from WORKWOOD_TARGETS (a YAML key->path
+# map); the session is named after the active super-feature.
+#
+#   workwood action tmux <feature>
+set -euo pipefail
+: "${WORKWOOD_TARGETS:?run via: workwood action tmux <feature>}"
+command -v tmux >/dev/null 2>&1 || { echo "ERROR: tmux is not installed" >&2; exit 1; }
+SESSION="${WORKWOOD_FEATURE:-workwood}"
+
+tmux has-session -t "$SESSION" 2>/dev/null && tmux kill-session -t "$SESSION"
+tmux new-session -d -s "$SESSION" -n base
+tmux set -g pane-border-status top
+tmux set -g pane-border-format ' #{pane_title} '
+
+# One window per "key: path" target.
+while IFS= read -r line; do
+    key=${line%%:*}
+    path=${line#*: }
+    [ -n "$key" ] && [ "$key" != "$line" ] || continue
+    [ -d "$path" ] || continue
+    tmux new-window -t "$SESSION" -n "$key" -c "$path"
+    P=$(tmux display-message -p -t "$SESSION:$key" '#{pane_id}')
+    tmux select-pane -t "$P" -T "$key"
+done < "$WORKWOOD_TARGETS"
+
+tmux select-window -t "$SESSION:base"
+exec tmux attach -t "$SESSION"

@@ -5,17 +5,19 @@
 //
 //   - the SUPER-REPO (committed, shared): workwood.yml at the root holds the
 //     project definition + its UUID identity + canonical name; a workwood/ folder
-//     holds plugins/ (the only plugin source) and super-features/ (the manifests,
+//     holds actions/ (the only action source) and super-features/ (the manifests,
 //     each carrying its own UUID + a back-link to the project UUID).
 //   - the GLOBAL user dir ~/.workwood (or $WORKWOOD_HOME): app settings ONLY —
 //     language, update-check, and a saved fallback for the data-dir path.
-//   - the EXTERNAL data dir $WORKWOOD_DATA/<project-uuid>/ (never committed): this
-//     developer's workwood-state.yml (active names, per-feature targets, optional
-//     path overrides) plus the default main/ (base clones) and features/ (worktrees).
+//   - the EXTERNAL data dir $WORKWOOD_DATA (never committed): set per project, it
+//     points straight at this project's data dir, holding the developer's
+//     workwood-state.yml (active names, per-feature targets, optional path
+//     overrides) plus the default main/ (base clones) and features/ (worktrees).
 //
 // A project is located by walking up from the cwd (or an explicit -p <path>) to a
-// workwood.yml; its UUID then names the external state dir. The UUID is the link
-// that lets a renamed/re-pathed project still find its own state.
+// workwood.yml. The project UUID is stored inside workwood-state.yml as an
+// integrity link (it rejects a data dir that belongs to a different project),
+// not as a path segment.
 package config
 
 import (
@@ -32,11 +34,15 @@ import (
 // File / dir names.
 const (
 	ProjectDefName   = "workwood.yml"       // committed project def, at the super-repo root
-	WorkwoodDirName  = "workwood"           // committed folder holding plugins/ + super-features/
-	PluginsDirName   = "plugins"            // <root>/workwood/plugins
+	WorkwoodDirName  = "workwood"           // committed folder holding actions/ + super-features/
+	ActionsDirName   = "actions"            // <root>/workwood/actions
 	ManifestsDirName = "super-features"     // <root>/workwood/super-features
 	StateFileName    = "workwood-state.yml" // per-developer state, in the data dir
 	AppFileName      = "config.yaml"        // ~/.workwood/config.yaml (app settings)
+
+	// RepoWorkwoodDirName is the per-repo folder (in a base clone or worktree) that
+	// may hold a targets.yml describing a multi-service repo's sub-paths.
+	RepoWorkwoodDirName = ".workwood"
 )
 
 // EnvHome and EnvData are the env overrides for the two non-committed locations.
@@ -67,10 +73,10 @@ type Config struct {
 	ProjectID    string // project UUID (from workwood.yml)
 	ProjectSlug  string // original_name (workwood.yml name): branch/display source of truth
 	ProjectName  string // active_name (from workwood-state.yml); falls back to slug
-	PluginsDir   string // <Root>/workwood/plugins (the only plugin source)
+	ActionsDir   string // <Root>/workwood/actions (the only action source)
 	ManifestsDir string // <Root>/workwood/super-features
-	DataDir      string // $WORKWOOD_DATA (resolved)
-	StateDir     string // <DataDir>/<project-uuid>
+	DataDir      string // $WORKWOOD_DATA (resolved) — this project's data dir
+	StateDir     string // = DataDir (no per-project subdir; WORKWOOD_DATA is per-project)
 	StateFile    string // <StateDir>/workwood-state.yml
 	MainDir      string // base reference clones (state override, else <StateDir>/main)
 	FeaturesDir  string // feature worktrees (state override, else <StateDir>/features)
@@ -193,16 +199,17 @@ func findProjectRoot(dir string) string {
 	}
 }
 
-// Build assembles a Config from a located project and a resolved data dir. It
-// loads the developer's workwood-state.yml (empty if absent) for the active name
-// and any path overrides. A state file whose stored project UUID disagrees with
-// the workwood.yml id is rejected (a copied/misfiled state dir).
+// Build assembles a Config from a located project and a resolved data dir. The
+// data dir IS this project's state dir (WORKWOOD_DATA points straight at it — it
+// differs per project), so its workwood-state.yml records the project UUID purely
+// as an integrity link: a state file whose stored UUID disagrees with the
+// workwood.yml id is rejected (two projects pointed at the same data dir).
 func Build(root string, pd *projectdef.File, dataDir string) (*Config, error) {
 	home, err := Home()
 	if err != nil {
 		return nil, err
 	}
-	stateDir := filepath.Join(dataDir, pd.ID)
+	stateDir := dataDir
 	stateFile := filepath.Join(stateDir, StateFileName)
 	st, err := LoadState(stateFile)
 	if err != nil {
@@ -220,14 +227,10 @@ func Build(root string, pd *projectdef.File, dataDir string) (*Config, error) {
 	if name == "" {
 		name = slug
 	}
-	mainDir := st.MainDir
-	if mainDir == "" {
-		mainDir = filepath.Join(stateDir, "main")
-	}
-	featuresDir := st.FeaturesDir
-	if featuresDir == "" {
-		featuresDir = filepath.Join(stateDir, "features")
-	}
+	// Base clones + worktrees always live under the data dir — not configurable
+	// (WORKWOOD_DATA, set per project, is the single knob).
+	mainDir := filepath.Join(stateDir, "main")
+	featuresDir := filepath.Join(stateDir, "features")
 
 	return &Config{
 		Home:         home,
@@ -236,7 +239,7 @@ func Build(root string, pd *projectdef.File, dataDir string) (*Config, error) {
 		ProjectID:    pd.ID,
 		ProjectSlug:  slug,
 		ProjectName:  name,
-		PluginsDir:   filepath.Join(root, WorkwoodDirName, PluginsDirName),
+		ActionsDir:   filepath.Join(root, WorkwoodDirName, ActionsDirName),
 		ManifestsDir: filepath.Join(root, WorkwoodDirName, ManifestsDirName),
 		DataDir:      dataDir,
 		StateDir:     stateDir,

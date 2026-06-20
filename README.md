@@ -3,12 +3,14 @@
 A **global CLI** for working across many repos at once. workwood orchestrates
 **git worktrees** so a "super-feature" can span several repos — and, crucially,
 hold **multiple branches of the same repo** (which submodules can't). It is
-**plugin-driven**: workwood manages the worktrees and hands a resolved context to
-**plugins** (e.g. `tmux`, `ssh`) that compose whatever workflow you want on top.
+**action-driven**: workwood manages the worktrees and hands the selected target
+paths to **actions** (e.g. `tmux`, `ssh`) that do whatever you want with them.
 
 It does *not* vendor your repos. A team keeps a small **super-repo** describing
 the project; each developer runs `workwood init` there once, and their personal
-state lives outside the repo in a data dir keyed by the project's UUID.
+state lives outside the repo in a data dir they point at per project with
+`WORKWOOD_DATA` (the project's UUID is recorded inside that state as an integrity
+link, not as a path segment).
 
 ## Where everything lives
 
@@ -16,9 +18,10 @@ state lives outside the repo in a data dir keyed by the project's UUID.
 | --- | --- | --- | --- |
 | **Project definition** — `id` (UUID) + `name` + org + repo list | the super-repo root: `workwood.yml` | the team | yes |
 | **Super-feature manifests** — `id` + parent `project` UUID + repos/branches/paths | the super-repo: `workwood/super-features/<slug>.yaml` | the team | yes |
-| **Plugins** (`tmux`, `ssh`, …) | the super-repo: `workwood/plugins/` | the team | yes |
-| **Your per-project state** — editable names, run-target setups, path overrides | `$WORKWOOD_DATA/<project-uuid>/workwood-state.yml` | you | no |
-| **Base clones + feature worktrees** | `$WORKWOOD_DATA/<project-uuid>/{main,features}/` (overridable) | you | no |
+| **Actions** (`tmux`, `ssh`, …) | the super-repo: `workwood/actions/` | the team | yes |
+| **Your per-project state** — editable names, target working sets | `$WORKWOOD_DATA/workwood-state.yml` | you | no |
+| **Saved target presets** | `$WORKWOOD_DATA/targets/<name>.yml` | you | no |
+| **Base clones + feature worktrees** | `$WORKWOOD_DATA/{main,features}/` (fixed, not configurable) | you | no |
 | **Global app settings** — language, update-check, data-dir fallback | `~/.workwood/config.yaml` | you | no |
 
 The split is deliberate: everything **shared and portable** is committed in the
@@ -94,9 +97,9 @@ workwood sf create my-feature "what it's for"
 workwood sf add my-feature api feature/integrate     # branch my-feature/feature/integrate
 workwood sf add my-feature web ui                    # branch my-feature/ui
 
-# 4. Compose a workflow over it.
-workwood compose tmux my-feature            # one tmux session, a window per repo
-workwood compose ssh  my-feature            # jump into a dev-deployed service
+# 4. Run an action over its targets.
+workwood action tmux my-feature             # one tmux session, a window per target
+workwood action ssh  my-feature             # open a shell in a chosen target
 ```
 
 `workwood init` turns a cloned super-repo into a working setup; it's safe to
@@ -114,6 +117,18 @@ There is no registry — workwood finds the project by **location**:
 workwood project                 # show the current project (uuid, names, paths)
 workwood project rename "Pay"    # set YOUR local display name (slug unchanged)
 ```
+
+## The TUI
+
+Running `workwood` (no args) opens a root menu with three entries:
+
+- **Super-features** — the feature picker; create one, or open one to edit its
+  worktrees (then `o` for its Actions screen).
+- **Edit project** — add/remove the base repos in `workwood.yml` (`a` to add, `d`
+  to remove). Each repo shows its clone state under `main_dir`; ones that aren't a
+  real clone (missing, or a stray worktree rather than the main git) are listed in
+  **red**, and `p` fetches + pulls them all (cloning any that are missing).
+- **⚙ Settings** — language, update-check, and this project's display name.
 
 ## Super-features
 
@@ -145,105 +160,87 @@ non-nesting name.
 Commit `super-features/voice.yaml` and push it. A teammate then `git pull`s,
 runs `workwood repos pull`, and `workwood sf up voice` rebuilds the exact set.
 
-## Plugins + `.workwood/`
+## Actions + targets
 
-A **plugin is just a script** (any language). workwood never composes behaviour
-itself — it resolves each repo to a target + source dir and hands that to the
-plugin. A plugin is two halves it glues together:
+workwood is deliberately **dumb about meaning**. A **target** is just a named
+absolute path; an **action** is just a script that does something with the
+selected targets. The tool hands an action the enabled targets + the feature name
+and gets out of the way — *the action* decides what "local", "deployed", "build",
+etc. mean.
 
-- a **PARENT** script committed in the super-repo's **`workwood/plugins/`** folder
-  (the only plugin source — shared with the whole team), and
-- a **CHILD** script in each referenced repo's **`.workwood/`** folder, which the
-  parent runs per repo and composes the results of.
+### Targets — a named set of paths
+
+Each feature has a **working set**: a map of editable `key → absolute path`,
+stored per-developer in your `workwood-state.yml`. A **clean** set is seeded from
+every reference repo (key = repo name) and the feature's worktrees (key = the
+sub-branch). You edit it on the **Actions screen** in the TUI (press `o` in the
+feature editor):
+
+- **space** toggles a candidate on/off (on = in the working set).
+- **p** adds an arbitrary path — point it anywhere (even a repo outside the
+  feature). If the path is a git repo, the key defaults to its current branch;
+  otherwise you type a key.
+- **r** renames a key; **S** saves the working set as a named **preset**; **L**
+  loads one. Presets live at `$WORKWOOD_DATA/targets/<name>.yml`
+  (plain `key: /abs/path` YAML) and are reusable across features.
+
+**Multi-service repos:** if a repo (or worktree) ships a committed
+`.workwood/targets.yml` (a `serviceName → subpath` map), the tree expands it into
+one toggleable sub-node per service — so a single super-repo can mix single-service
+and multi-service repos. See [`example/.workwood/targets.yml`](example/.workwood/targets.yml).
+
+CLI: `workwood targets list` (presets) and `workwood targets show <feature>` (the
+working set).
+
+### Actions — scripts in `workwood/actions/`
+
+An **action is just a script** (any language) committed in the super-repo's
+**`workwood/actions/`** folder — the only action source, shared with the team.
+`workwood init` creates it empty; add your own and commit them. Three worked
+references ship in [`example/workwood/actions/`](example/workwood/actions):
+**`helloworld`** (greets each target), **`tmux`** (one window per target), and
+**`ssh`** (pick a target, open a shell there). Copy any into your project.
 
 ```sh
-workwood compose helloworld voice    # run the helloworld plugin against the feature
-workwood compose tmux voice          # the tmux plugin: a window per repo
-workwood compose tmux voice --init   # scaffold each repo's .workwood child
-workwood plugins                     # list available plugins
+workwood actions                         # list available actions
+workwood action helloworld voice         # run against voice's working set
+workwood action tmux voice --targets api-only   # …or against a saved preset
 ```
 
-`workwood init` creates an **empty** `workwood/plugins/` — add your own scripts
-there and commit them. Three worked reference plugins ship in
-[`example/workwood/plugins/`](example/workwood/plugins): **`helloworld`** (the
-teaching example — parent prints `hello `, each repo's child prints `world`),
-**`tmux`** (one session, a window per context row), and **`ssh`** (pick a repo
-that ships a `.workwood/ssh` child and connect). Copy any of them into your
-project's `workwood/plugins/` to use them.
+Run an action from the TUI Actions screen with **R** (it picks up the current
+working set; a terminal-takeover action like tmux suspends the TUI and resumes
+when it exits).
 
-### Two modes: run and init
+### The context handed to an action
 
-A plugin is invoked in one of two modes (it reads `WORKWOOD_MODE`):
-
-- **run** (default) — compose behaviour from the children.
-- **init** (`workwood compose <plugin> <feature> --init`) — the plugin's utility
-  for scaffolding a starter **child** script into each repo's `.workwood/` folder.
-
-### The context handed to a plugin
-
-workwood resolves each repo to a **target** + source dir, writes a TSV context
-file, and execs the parent with it in the environment:
+workwood writes the enabled targets to a YAML file and execs the action with:
 
 | Env | Meaning |
 | --- | --- |
-| `WORKWOOD_PROJECT` | project slug (the immutable original name, not your local label) |
-| `WORKWOOD_FEATURE` | feature slug (the immutable original name) |
-| `WORKWOOD_PLUGIN` | the plugin's name |
-| `WORKWOOD_MODE` | `run` or `init` |
-| `WORKWOOD_SESSION` | suggested session name (= feature) |
-| `WORKWOOD_CONTEXT` | path to a TSV, one row per **target setup** |
-| `WORKWOOD_LANG` | the active UI language (`en`/`ja`) — localize your plugin's own output if you like |
+| `WORKWOOD_TARGETS` | path to `context.yml`, a `key: /abs/path` map of the enabled targets |
+| `WORKWOOD_FEATURE` | the active super-feature slug |
+| `WORKWOOD_ACTION` | the action's name |
+| `WORKWOOD_LANG` | the active UI language (`en`/`ja`) — localize your own output if you like |
 | `WORKWOOD_VAR_<KEY>` | each entry of the manifest's free-form `vars:` map |
 
-Each TSV row is tab-separated: `repo  target  dir  workwoodDir  branch`, where
-`dir` is the absolute source dir and `workwoodDir` is `<dir>/.workwood`. `branch`
-is last because it's the only field that can be empty. Because targets are
-additive, a repo can produce **several rows**. Read it without `jq`:
+`context.yml` is a plain map — read it without `jq`:
 
 ```sh
-while IFS=$'\t' read -r repo target dir workwood branch; do
-    "$workwood"/helloworld     # run this repo's child, honouring $target
-done < "$WORKWOOD_CONTEXT"
+while IFS= read -r line; do
+    key=${line%%:*}; path=${line#*: }
+    [ -n "$key" ] && [ "$key" != "$line" ] || continue
+    echo "do something in $key → $path"
+done < "$WORKWOOD_TARGETS"
 ```
 
-A child receives `WORKWOOD_REPO`, `WORKWOOD_TARGET`, `WORKWOOD_DIR`, and
-`WORKWOOD_BRANCH`. See [`example/.workwood/`](example/.workwood) for worked child
-templates and [`example/workwood.yml`](example/workwood.yml) for a project def.
-
-### Targets — additive, per repo
-
-Each repo carries an **ordered list of setups** (stored per-developer in your
-`workwood-state.yml`, keyed by the feature's UUID); composing emits **one context
-row per setup**, so the same repo can take part several ways at once. The built-in
-setups are:
-
-| Setup | Source dir handed to the plugin |
-| --- | --- |
-| `worktree` | one of the feature's worktrees (name a path when there are several) |
-| `main` | the base reference clone in your `main_dir` |
-| `ignore` | excluded from composition — but only when it's the repo's **sole** setup |
-| *any other string* (e.g. `deploy`) | a **custom** target — workwood passes the raw string + the base clone dir to the repo's `.workwood` child, which decides what it means |
-
-A repo with **no** setups falls back to automatic (checked-out worktree, else main).
-
-```sh
-workwood sf target add    voice api worktree           # source api from its worktree
-workwood sf target add    voice api deploy             # ALSO add a custom 'deploy' setup
-workwood sf target add    voice --all main             # bulk: add 'main' to every repo
-workwood sf target add    voice --repo api --repo web ignore
-workwood sf target remove voice api deploy             # drop one setup
-workwood sf target clear  voice api                    # reset api to auto
-workwood sf target list   voice                        # show each repo's setups
-```
-
-In the TUI editor: `t` adds a setup to the highlighted repo, `T` adds one to many
-repos at once (multi-select), `c` clears a repo back to auto.
+That's the whole contract: paths + the feature name. No modes, no per-repo child
+scripts, no tool-imposed semantics.
 
 ## Command reference
 
 | Command | What it does |
 | --- | --- |
-| `workwood init [path]` | scaffold/sync this super-repo (idempotent): back-fill the project UUID, create `workwood/{plugins,super-features}`, write your `workwood-state.yml` |
+| `workwood init [path]` | scaffold/sync this super-repo (idempotent): back-fill the project UUID, create `workwood/{actions,super-features}`, write your `workwood-state.yml` |
 | `workwood project [info]` | show the current project (uuid, original + active name, paths) |
 | `workwood project rename <name>` | set YOUR local display name (slug/branches unchanged) |
 | `workwood repos pull` | clone/refresh every base repo into `main_dir` |
@@ -252,14 +249,14 @@ repos at once (multi-select), `c` clears a repo back to auto.
 | `workwood sf rename <slug> <name>` | set a super-feature's local display name (slug unchanged) |
 | `workwood sf add <name> <repo> <wt-branch> [--from <src>] [--no-feature-prefix]` | add a worktree on `<name>/<wt-branch>` |
 | `workwood sf up <name>` | rebuild all worktrees from the manifest |
-| `workwood sf target add\|remove\|clear\|list <name> …` | manage a repo's additive target setups (`--all`/`--repo` for bulk) |
 | `workwood sf status <name>` | branch + dirty state per worktree |
 | `workwood sf list` | list all super-features |
 | `workwood sf remove <name> <repo> [wt-branch] [--prune-branch]` | remove ONE worktree (+ optionally its branch) |
 | `workwood sf down <name>` | remove ALL worktrees, keep the manifest |
 | `workwood sf delete <name> [--prune-branches]` | remove worktrees + manifest (+ branches) |
-| `workwood compose <plugin> <feature> [--init]` | run a plugin (or `--init` to scaffold its `.workwood` children) |
-| `workwood plugins` | list available plugins |
+| `workwood action <name> <feature> [--targets <preset\|file>]` | run an action against the feature's working set (or a preset) |
+| `workwood actions` | list available actions |
+| `workwood targets list\|show <feature>` | list saved presets / show a feature's working set |
 | `workwood lang [en\|ja]` | show or set the UI language |
 | `workwood version` | print the build + file-schema version |
 
@@ -286,15 +283,15 @@ workwood lang            # show the active language + supported codes
 workwood lang ja         # persist Japanese in your config
 ```
 
-You can also change the language (and the update-check toggle, this project's
-active name, and its checkout-path overrides) interactively in the TUI's **⚙
-Settings** screen — pick it from the feature list. App settings write to
-`~/.workwood/config.yaml`; the project name/paths write to your
-`workwood-state.yml`. Both apply immediately.
+You can also change the language, the update-check toggle, and this project's
+active name interactively in the TUI's **⚙ Settings** screen (from the root menu).
+App settings write to `~/.workwood/config.yaml`; the project name writes to your
+`workwood-state.yml`. Both apply immediately. (Checkout paths aren't editable —
+they're fixed under `WORKWOOD_DATA`.)
 
-Technical/CLI terms (worktree, super-feature, plugin, repo, the target names
-`ignore`/`main`/`worktree`) stay in English in every language so commands remain
-literal. Plugin scripts and repo content are not translated.
+Technical/CLI terms (worktree, super-feature, action, target, repo) stay in
+English in every language so commands remain literal. Action scripts and repo
+content are not translated.
 
 ## Code layout
 
@@ -306,9 +303,9 @@ literal. Plugin scripts and repo content are not translated.
 | `projectdef/` | parse/scaffold a super-repo's `workwood.yml` (id + name + repos) |
 | `manifest/` | load/save super-feature manifests (id + parent project) |
 | `gitx/` | thin wrappers over the `git` / `gh` CLIs |
-| `targets/` | the run-target data type + label helpers (persisted in `config`'s state) |
-| `plugin/` | resolve targets → context TSV → exec a plugin from `workwood/plugins` |
-| `superfeature/` | create/add/up/down/remove/status/list/rename + compose |
+| `targetcfg/` | the target working set + presets + candidate tree (`.workwood/targets.yml` expansion) |
+| `action/` | write the targets `context.yml` → exec an action from `workwood/actions` |
+| `superfeature/` | create/add/up/down/remove/status/list/rename + run-action |
 | `repos/` | clone/refresh the base reference clones |
 | `update/` | once-a-day "newer release available" check (passive, stderr) |
 | `version/` | build + on-disk schema version and the compatibility check |
@@ -325,9 +322,9 @@ literal. Plugin scripts and repo content are not translated.
   `version:` schema number. A file written by a **newer** workwood than your build
   is refused with an upgrade message rather than misread; legacy files without it
   are accepted and re-stamped on the next write.
-- Plugins are language-agnostic executables committed in `workwood/plugins/`. Each
-  plugin receives `WORKWOOD_LANG` so it can localize its *own* output if it wants;
-  workwood never translates plugin text.
+- Actions are language-agnostic executables committed in `workwood/actions/`. Each
+  action receives `WORKWOOD_LANG` so it can localize its *own* output if it wants;
+  workwood never translates action text.
 - The project's `id` (and each manifest's `id` + `project`) get written into the
   committed files by `init`/`sf create` — **commit them** so teammates share the
   same identity and their state links up correctly.

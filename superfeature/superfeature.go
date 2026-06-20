@@ -1,6 +1,6 @@
 // Package superfeature implements the super-feature operations: create a
 // manifest, add/remove worktrees, rebuild from a manifest, report status, and
-// tear down — plus running a plugin against the resolved active context.
+// tear down — plus running an action against the feature's selected targets.
 //
 // A super-feature is a tracked manifest recording every worktree+branch that
 // belongs to it. Worktrees are cut from the base clones in the project's
@@ -15,58 +15,32 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/JoshuaLM114/workwood/action"
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/gitx"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/manifest"
-	"github.com/JoshuaLM114/workwood/plugin"
 	"github.com/JoshuaLM114/workwood/projectdef"
-	"github.com/JoshuaLM114/workwood/targets"
+	"github.com/JoshuaLM114/workwood/repos"
+	"github.com/JoshuaLM114/workwood/targetcfg"
 	"github.com/google/uuid"
 )
 
-// LoadState returns a feature's per-developer run-target map (repo → setups),
-// empty when the feature has no setups. slug is the feature's filename stem.
-func LoadState(cfg *config.Config, slug string) (map[string][]targets.Target, error) {
-	m, err := manifest.Load(cfg.ManifestPath(slug))
+// CheckReposReady errors when the project has no repos defined, or any configured
+// repo isn't a real main clone yet — the precondition for creating super-features
+// (worktrees are cut from those clones).
+func CheckReposReady(cfg *config.Config) error {
+	pd, err := projectdef.Load(cfg.ProjectDef)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	st, err := config.LoadState(cfg.StateFile)
-	if err != nil {
-		return nil, err
+	if len(pd.Repos) == 0 {
+		return i18n.Err("err.no_repos_defined")
 	}
-	if m.ID == "" {
-		return map[string][]targets.Target{}, nil
+	if bad := repos.Unready(cfg, pd); len(bad) > 0 {
+		return i18n.Err("err.repos_not_ready", strings.Join(bad, ", "))
 	}
-	return st.Features[m.ID].Targets, nil
-}
-
-// AddTarget appends a setup to a repo's additive target list. Returns whether it
-// was newly added (false = already present).
-func AddTarget(cfg *config.Config, slug, repo string, t targets.Target) (bool, error) {
-	var added bool
-	err := updateTarget(cfg, slug, func(uuid string, s *config.ProjectState) {
-		added = s.AddTarget(uuid, repo, t)
-	})
-	return added, err
-}
-
-// RemoveTarget drops a matching setup from a repo's list. Returns whether one
-// was removed.
-func RemoveTarget(cfg *config.Config, slug, repo string, t targets.Target) (bool, error) {
-	var removed bool
-	err := updateTarget(cfg, slug, func(uuid string, s *config.ProjectState) {
-		removed = s.RemoveTarget(uuid, repo, t)
-	})
-	return removed, err
-}
-
-// ClearTarget returns a repo to the automatic default (drops all its setups).
-func ClearTarget(cfg *config.Config, slug, repo string) error {
-	return updateTarget(cfg, slug, func(uuid string, s *config.ProjectState) {
-		s.ClearTarget(uuid, repo)
-	})
+	return nil
 }
 
 // Repos returns the distinct repo names in a feature's manifest, in order.
@@ -86,10 +60,20 @@ func Repos(cfg *config.Config, slug string) ([]string, error) {
 	return out, nil
 }
 
-// updateTarget loads the manifest (for the feature UUID that keys its state), the
-// project state, applies mutate, and saves. A manifest without a UUID hasn't been
-// initialised — direct the user to `workwood init`.
-func updateTarget(cfg *config.Config, slug string, mutate func(uuid string, s *config.ProjectState)) error {
+// checkProject errors when a manifest's parent UUID disagrees with the resolved
+// project — i.e. a manifest copied in from a different super-repo.
+func checkProject(cfg *config.Config, m *manifest.Manifest) error {
+	if m.Project != "" && m.Project != cfg.ProjectID {
+		return i18n.Err("err.manifest_wrong_project", m.Feature, m.Project, cfg.ProjectID)
+	}
+	return nil
+}
+
+// RunAction runs the named action against a feature's targets. With override==nil
+// it uses the feature's persisted working set; pass a non-nil Set to run against an
+// explicit configuration (e.g. a loaded preset). Validates the manifest's project
+// + UUID first.
+func RunAction(cfg *config.Config, slug, name string, override targetcfg.Set) error {
 	m, err := manifest.Load(cfg.ManifestPath(slug))
 	if err != nil {
 		return err
@@ -100,47 +84,18 @@ func updateTarget(cfg *config.Config, slug string, mutate func(uuid string, s *c
 	if m.ID == "" {
 		return i18n.Err("err.feature_not_adopted", slug)
 	}
-	s, err := config.LoadState(cfg.StateFile)
-	if err != nil {
-		return err
+	set := override
+	if set == nil {
+		pd, perr := projectdef.Load(cfg.ProjectDef)
+		if perr != nil {
+			return perr
+		}
+		if set, err = targetcfg.Working(cfg, pd, m); err != nil {
+			return err
+		}
 	}
-	s.EnsureFeature(m.ID, slug)
-	mutate(m.ID, s)
-	return config.SaveState(cfg.StateFile, s)
+	return action.Run(cfg, slug, name, set, m.Vars)
 }
-
-// checkProject errors when a manifest's parent UUID disagrees with the resolved
-// project — i.e. a manifest copied in from a different super-repo.
-func checkProject(cfg *config.Config, m *manifest.Manifest) error {
-	if m.Project != "" && m.Project != cfg.ProjectID {
-		return i18n.Err("err.manifest_wrong_project", m.Feature, m.Project, cfg.ProjectID)
-	}
-	return nil
-}
-
-// Compose runs a plugin against a feature in the given mode (run|init), handing
-// it the resolved active context (each repo's target + source dir).
-func Compose(cfg *config.Config, slug, pluginName, mode string) error {
-	m, err := manifest.Load(cfg.ManifestPath(slug))
-	if err != nil {
-		return err
-	}
-	if err := checkProject(cfg, m); err != nil {
-		return err
-	}
-	st, err := config.LoadState(cfg.StateFile)
-	if err != nil {
-		return err
-	}
-	var ft map[string][]targets.Target
-	if m.ID != "" {
-		ft = st.Features[m.ID].Targets
-	}
-	return plugin.Run(cfg, m, ft, pluginName, mode)
-}
-
-// Plugins lists the plugins available to a project (project dir + global dir).
-func Plugins(cfg *config.Config) []string { return plugin.List(cfg) }
 
 // ResolveBranch builds the full git branch for a worktree-branch-name. The real
 // branch is <feature>/<sub>; if the caller already typed that prefix it isn't
@@ -163,8 +118,13 @@ func ResolveBranchWith(feature, sub string, omitFeature bool) string {
 
 // Create writes a starter manifest for a new super-feature: it mints the feature
 // UUID, links it to the project, and records it in this developer's state
-// (active_name defaulting to the slug). It refuses to clobber an existing feature.
+// (active_name defaulting to the slug). It refuses to clobber an existing feature,
+// and refuses to create one until the project's base repos are real clones (so
+// worktrees can actually be cut from them).
 func Create(cfg *config.Config, slug, desc string) error {
+	if err := CheckReposReady(cfg); err != nil {
+		return err
+	}
 	path := cfg.ManifestPath(slug)
 	if _, err := os.Stat(path); err == nil {
 		return i18n.Err("err.manifest_exists", path)

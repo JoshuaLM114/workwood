@@ -8,7 +8,6 @@ import (
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/manifest"
 	"github.com/JoshuaLM114/workwood/superfeature"
-	"github.com/JoshuaLM114/workwood/targets"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -21,8 +20,6 @@ const (
 	formNone formMode = iota
 	formAdd
 	formMeta
-	formTarget
-	formBulk
 )
 
 // rowKind distinguishes a persisted worktree from one staged for addition.
@@ -46,8 +43,9 @@ type editorRow struct {
 }
 
 // editorModel is the malleable feature editor. It loads a feature's current
-// worktrees, lets the user stage additions and removals (and edit the
-// description), then applies the whole delta at once on save.
+// worktrees, lets the user stage additions and removals (and edit the name +
+// description), then applies the whole delta at once on save. Targets are edited
+// separately on the Actions screen (opened with `o`).
 type editorModel struct {
 	m      *Model
 	name   string // feature slug (immutable handle)
@@ -57,15 +55,11 @@ type editorModel struct {
 	desc  string
 	rows  []editorRow
 	table table.Model
-	state map[string][]targets.Target
 
-	form       *huh.Form
-	formMode   formMode
-	addVals    addVals
-	metaVals   metaVals
-	setupVals  setupVals
-	bulkVals   bulkVals
-	targetRepo string // repo being targeted while formTarget is open
+	form     *huh.Form
+	formMode formMode
+	addVals  addVals
+	metaVals metaVals
 
 	status string
 	busy   bool
@@ -79,19 +73,15 @@ func newEditorModel(m *Model, slug string) (*editorModel, error) {
 	if err != nil {
 		return nil, err
 	}
-	ps, err := config.LoadState(m.cfg.StateFile)
-	if err != nil {
-		return nil, err
-	}
 	active := slug
-	var st map[string][]targets.Target
 	if man.ID != "" {
-		if fs, ok := ps.FeatureByUUID(man.ID); ok {
-			active = fs.DisplayName()
-			st = fs.Targets
+		if ps, err := config.LoadState(m.cfg.StateFile); err == nil {
+			if fs, ok := ps.FeatureByUUID(man.ID); ok {
+				active = fs.DisplayName()
+			}
 		}
 	}
-	e := &editorModel{m: m, name: slug, active: active, man: man, desc: man.Description, state: st}
+	e := &editorModel{m: m, name: slug, active: active, man: man, desc: man.Description}
 	e.table = table.New(
 		table.WithColumns(editorColumns(m.width)),
 		table.WithFocused(true),
@@ -102,23 +92,16 @@ func newEditorModel(m *Model, slug string) (*editorModel, error) {
 }
 
 func editorColumns(width int) []table.Column {
-	branchW := 30
-	targetW := 22
+	branchW := 36
 	if width > 0 {
-		branchW = max(14, width-72)
+		branchW = max(16, width-46)
 	}
 	return []table.Column{
 		{Title: "", Width: 9},
 		{Title: i18n.T("tui.col.repo"), Width: 14},
 		{Title: i18n.T("tui.col.branch"), Width: branchW},
 		{Title: i18n.T("tui.col.base"), Width: 9},
-		{Title: i18n.T("tui.col.targets"), Width: targetW},
 	}
-}
-
-// targetLabel is the comma-joined list of a repo's setups, or "auto".
-func (e *editorModel) targetLabel(repo string) string {
-	return targets.LabelList(e.state[repo], e.name)
 }
 
 // dirty reports whether there are unsaved staged changes.
@@ -172,7 +155,7 @@ func (e *editorModel) rebuildRows() {
 func (e *editorModel) tableRow(r editorRow) table.Row {
 	switch r.kind {
 	case rowStagedAdd:
-		return table.Row{"+ add", r.add.Repo, r.addBranch, orDash(r.add.From), e.targetLabel(r.add.Repo)}
+		return table.Row{"+ add", r.add.Repo, r.addBranch, orDash(r.add.From)}
 	default:
 		status := "·"
 		if r.checkedOut {
@@ -184,16 +167,8 @@ func (e *editorModel) tableRow(r editorRow) table.Row {
 				status = "✗ +prune"
 			}
 		}
-		return table.Row{status, r.wt.Repo, r.wt.Branch, r.wt.Base, e.targetLabel(r.wt.Repo)}
+		return table.Row{status, r.wt.Repo, r.wt.Branch, r.wt.Base}
 	}
-}
-
-// rowRepo returns the repo of a row (existing worktree or staged add).
-func (r editorRow) rowRepo() string {
-	if r.kind == rowStagedAdd {
-		return r.add.Repo
-	}
-	return r.wt.Repo
 }
 
 func (e *editorModel) setSize(w, h int) {
@@ -272,21 +247,9 @@ func (e *editorModel) Update(msg tea.Msg) (*editorModel, tea.Cmd) {
 		case "X":
 			e.toggleRemove(true)
 			return e, nil
-		case "t":
-			if repo := e.selectedRepo(); repo != "" {
-				e.openTargetForm(repo)
-				return e, e.form.Init()
-			}
-			return e, nil
-		case "T":
-			e.openBulkForm()
-			if e.form != nil {
-				return e, e.form.Init()
-			}
-			return e, nil
-		case "c":
-			e.clearSelectedTarget()
-			return e, nil
+		case "o":
+			slug := e.name
+			return e, func() tea.Msg { return openActionsMsg{feature: slug} }
 		case "s":
 			if !e.dirty() {
 				e.status = i18n.T("tui.status.nothing")
@@ -341,7 +304,7 @@ func (e *editorModel) syncTable() {
 
 func (e *editorModel) openAddForm() {
 	e.addVals = addVals{}
-	e.form = newAddForm(e.m.pd.Names(), &e.addVals).WithWidth(min(72, e.width-2))
+	e.form = newAddForm(e.m.pd.Names(), e.name, &e.addVals).WithWidth(min(72, e.width-2))
 	e.formMode = formAdd
 }
 
@@ -370,94 +333,6 @@ func (e *editorModel) applyRename(newName string) {
 	}
 }
 
-// selectedRepo is the repo of the highlighted table row, or "".
-func (e *editorModel) selectedRepo() string {
-	i := e.table.Cursor()
-	if i < 0 || i >= len(e.rows) {
-		return ""
-	}
-	return e.rows[i].rowRepo()
-}
-
-// worktreeOpts returns the worktree picker options for a repo.
-func (e *editorModel) worktreeOpts(repo string) []targetOption {
-	var opts []targetOption
-	for _, w := range e.man.Worktrees {
-		if w.Repo == repo {
-			opts = append(opts, targetOption{
-				label: i18n.T("tui.opt.worktree", strings.TrimPrefix(w.Path, e.name+"/")),
-				value: "wt:" + w.Path,
-			})
-		}
-	}
-	return opts
-}
-
-// featureRepos lists the distinct repos in the feature, in manifest order.
-func (e *editorModel) featureRepos() []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, w := range e.man.Worktrees {
-		if !seen[w.Repo] {
-			seen[w.Repo] = true
-			out = append(out, w.Repo)
-		}
-	}
-	return out
-}
-
-func (e *editorModel) openTargetForm(repo string) {
-	e.targetRepo = repo
-	e.setupVals = setupVals{}
-	e.form = newAddTargetForm(repo, e.worktreeOpts(repo), &e.setupVals).WithWidth(min(72, e.width-2))
-	e.formMode = formTarget
-}
-
-func (e *editorModel) openBulkForm() {
-	repos := e.featureRepos()
-	if len(repos) == 0 {
-		e.status = i18n.T("tui.status.no_repos")
-		return
-	}
-	e.bulkVals = bulkVals{}
-	e.form = newBulkTargetForm(repos, &e.bulkVals).WithWidth(min(72, e.width-2))
-	e.formMode = formBulk
-}
-
-func (e *editorModel) clearSelectedTarget() {
-	repo := e.selectedRepo()
-	if repo == "" {
-		return
-	}
-	if err := superfeature.ClearTarget(e.m.cfg, e.name, repo); err != nil {
-		e.status = errStyle.Render(i18n.T("tui.status.clear_failed", err.Error()))
-		return
-	}
-	e.reloadState()
-	e.status = okStyle.Render(i18n.T("tui.status.cleared", repo))
-}
-
-// parseSetup turns a setup picker result into a targets.Target.
-func parseSetup(v setupVals) (targets.Target, bool) {
-	switch {
-	case v.choice == "custom":
-		c := strings.TrimSpace(v.custom)
-		if c == "" {
-			return targets.Target{}, false
-		}
-		return targets.Target{Source: targets.Source(c)}, true
-	case v.choice == "ignore":
-		return targets.Target{Source: targets.SourceIgnore}, true
-	case v.choice == "main":
-		return targets.Target{Source: targets.SourceMain}, true
-	case v.choice == "worktree":
-		return targets.Target{Source: targets.SourceWorktree}, true
-	case strings.HasPrefix(v.choice, "wt:"):
-		return targets.Target{Source: targets.SourceWorktree, Worktree: strings.TrimPrefix(v.choice, "wt:")}, true
-	}
-	return targets.Target{}, false
-}
-
 // onFormDone reads back the completed form and applies the result.
 func (e *editorModel) onFormDone() {
 	switch e.formMode {
@@ -480,46 +355,9 @@ func (e *editorModel) onFormDone() {
 		e.desc = e.metaVals.desc
 		e.applyRename(strings.TrimSpace(e.metaVals.name))
 		e.status = i18n.T("tui.status.desc_updated")
-	case formTarget:
-		if t, ok := parseSetup(e.setupVals); ok {
-			added, err := superfeature.AddTarget(e.m.cfg, e.name, e.targetRepo, t)
-			if err != nil {
-				e.status = errStyle.Render(i18n.T("tui.status.target_failed", err.Error()))
-			} else {
-				e.reloadState()
-				if added {
-					e.status = okStyle.Render(i18n.T("tui.status.target_added", e.targetRepo, t.Label(e.name)))
-				} else {
-					e.status = i18n.T("tui.status.target_exists", e.targetRepo, t.Label(e.name))
-				}
-			}
-		}
-	case formBulk:
-		if t, ok := parseSetup(e.bulkVals.setup); ok {
-			n := 0
-			for _, repo := range e.bulkVals.repos {
-				if _, err := superfeature.AddTarget(e.m.cfg, e.name, repo, t); err != nil {
-					e.status = errStyle.Render(i18n.T("tui.status.bulk_failed", err.Error()))
-					e.form = nil
-					e.formMode = formNone
-					return
-				}
-				n++
-			}
-			e.reloadState()
-			e.status = okStyle.Render(i18n.T("tui.status.bulk_added", t.Label(e.name), n))
-		}
 	}
 	e.form = nil
 	e.formMode = formNone
-}
-
-// reloadState re-reads the per-developer target state and re-renders.
-func (e *editorModel) reloadState() {
-	if st, err := superfeature.LoadState(e.m.cfg, e.name); err == nil {
-		e.state = st
-	}
-	e.syncTable()
 }
 
 // applyCmd runs the staged delta off the event loop.
@@ -576,13 +414,8 @@ func (e *editorModel) reloadAfterApply(res *superfeature.EditResult) {
 func (e *editorModel) View() string {
 	if e.form != nil {
 		title := i18n.T("tui.title.add_worktree")
-		switch e.formMode {
-		case formMeta:
+		if e.formMode == formMeta {
 			title = i18n.T("tui.title.edit_desc")
-		case formTarget:
-			title = i18n.T("tui.title.add_target")
-		case formBulk:
-			title = i18n.T("tui.title.bulk")
 		}
 		return docStyle.Render(titleStyle.Render(title) + "\n\n" + e.form.View() + "\n" + helpStyle.Render(i18n.T("tui.form_help")))
 	}

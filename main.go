@@ -17,20 +17,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	"github.com/JoshuaLM114/workwood/action"
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/manifest"
-	"github.com/JoshuaLM114/workwood/plugin"
 	"github.com/JoshuaLM114/workwood/projectdef"
 	"github.com/JoshuaLM114/workwood/repos"
 	"github.com/JoshuaLM114/workwood/superfeature"
-	"github.com/JoshuaLM114/workwood/targets"
+	"github.com/JoshuaLM114/workwood/targetcfg"
 	"github.com/JoshuaLM114/workwood/tui"
 	"github.com/JoshuaLM114/workwood/update"
 	"github.com/JoshuaLM114/workwood/version"
 	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -57,10 +59,12 @@ func main() {
 		must(runRepos(projectFlag, args))
 	case "super-feature", "sf", "feature":
 		must(runFeature(projectFlag, args))
-	case "compose":
-		must(runCompose(projectFlag, args))
-	case "plugins":
-		must(runPlugins(projectFlag))
+	case "action":
+		must(runAction(projectFlag, args))
+	case "actions":
+		must(runActions(projectFlag))
+	case "targets":
+		must(runTargets(projectFlag, args))
 	case "version", "--version", "-v":
 		fmt.Println(i18n.T("cli.version", version.Software, version.Schema))
 	case "":
@@ -235,9 +239,9 @@ func runInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	pluginsDir := filepath.Join(root, config.WorkwoodDirName, config.PluginsDirName)
+	actionsDir := filepath.Join(root, config.WorkwoodDirName, config.ActionsDirName)
 	manifestsDir := filepath.Join(root, config.WorkwoodDirName, config.ManifestsDirName)
-	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+	if err := os.MkdirAll(actionsDir, 0o755); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(manifestsDir, 0o755); err != nil {
@@ -248,7 +252,7 @@ func runInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	stateDir := filepath.Join(dataDir, pd.ID)
+	stateDir := dataDir
 	stateFile := filepath.Join(stateDir, config.StateFileName)
 	st, err := config.LoadState(stateFile)
 	if err != nil {
@@ -289,7 +293,7 @@ func runInit(args []string) error {
 		return err
 	}
 
-	fmt.Print(i18n.T("init.done", root, filepath.Join(root, config.ProjectDefName), pluginsDir, manifestsDir, stateFile))
+	fmt.Print(i18n.T("init.done", root, filepath.Join(root, config.ProjectDefName), actionsDir, manifestsDir, stateFile))
 	if wroteDef {
 		fmt.Println(i18n.T("init.commit_hint", config.ProjectDefName))
 	}
@@ -443,38 +447,124 @@ func runRepos(projectFlag string, args []string) error {
 	}
 }
 
-// ---- compose / plugins ----------------------------------------------------
+// ---- actions / targets ----------------------------------------------------
 
-func runCompose(projectFlag string, args []string) error {
+// runAction runs an action against a feature's targets:
+//
+//	workwood action <name> <feature> [--targets <preset|file>]
+//
+// With no --targets it uses the feature's persisted working set; otherwise it
+// loads the named preset (or a literal YAML file path).
+func runAction(projectFlag string, args []string) error {
 	pos, flags := splitFlags(args)
 	if len(pos) < 2 {
-		return i18n.Err("err.usage_compose")
+		return i18n.Err("err.usage_action")
 	}
 	cfg, err := resolveCfg(projectFlag)
 	if err != nil {
 		return err
 	}
-	mode := plugin.ModeRun
-	if hasFlag(flags, "init") {
-		mode = plugin.ModeInit
+	name, feature := pos[0], pos[1]
+
+	var override targetcfg.Set
+	if tf := flags["targets"]; tf != "" {
+		override, err = loadTargetsArg(cfg, tf)
+		if err != nil {
+			return err
+		}
 	}
-	return superfeature.Compose(cfg, pos[1], pos[0], mode)
+	return superfeature.RunAction(cfg, feature, name, override)
 }
 
-func runPlugins(projectFlag string) error {
+// loadTargetsArg resolves a --targets value: a preset name (in the targets dir)
+// or, when it looks like a path, a literal YAML file of key→path.
+func loadTargetsArg(cfg *config.Config, arg string) (targetcfg.Set, error) {
+	if strings.ContainsAny(arg, "/.") {
+		data, err := os.ReadFile(arg)
+		if err != nil {
+			return nil, err
+		}
+		set := targetcfg.Set{}
+		if err := yaml.Unmarshal(data, &set); err != nil {
+			return nil, i18n.Errw(err, "err.parse_file", arg)
+		}
+		return set, nil
+	}
+	return targetcfg.LoadPreset(cfg, arg)
+}
+
+func runActions(projectFlag string) error {
 	cfg, err := resolveCfg(projectFlag)
 	if err != nil {
 		return err
 	}
-	ps := superfeature.Plugins(cfg)
-	if len(ps) == 0 {
-		fmt.Println(i18n.T("plugins.none", cfg.PluginsDir))
+	as := action.List(cfg)
+	if len(as) == 0 {
+		fmt.Println(i18n.T("actions.none", cfg.ActionsDir))
 		return nil
 	}
-	for _, p := range ps {
-		fmt.Println(p)
+	for _, a := range as {
+		fmt.Println(a)
 	}
 	return nil
+}
+
+// runTargets lists saved presets or shows a feature's working set.
+func runTargets(projectFlag string, args []string) error {
+	cfg, err := resolveCfg(projectFlag)
+	if err != nil {
+		return err
+	}
+	sub := "list"
+	if len(args) > 0 {
+		sub = args[0]
+		args = args[1:]
+	}
+	switch sub {
+	case "list":
+		presets := targetcfg.ListPresets(cfg)
+		if len(presets) == 0 {
+			fmt.Println(i18n.T("targets.empty"))
+			return nil
+		}
+		fmt.Println(i18n.T("targets.list_header"))
+		for _, p := range presets {
+			fmt.Println("  " + p)
+		}
+		return nil
+	case "show":
+		if len(args) < 1 {
+			return i18n.Err("err.usage_targets_show")
+		}
+		m, err := manifest.Load(cfg.ManifestPath(args[0]))
+		if err != nil {
+			return err
+		}
+		pd, err := projectdef.Load(cfg.ProjectDef)
+		if err != nil {
+			return err
+		}
+		set, err := targetcfg.Working(cfg, pd, m)
+		if err != nil {
+			return err
+		}
+		if len(set) == 0 {
+			fmt.Println(i18n.T("targets.empty"))
+			return nil
+		}
+		fmt.Println(i18n.T("targets.show_header", args[0]))
+		keys := make([]string, 0, len(set))
+		for k := range set {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Printf("  %-24s %s\n", k, set[k])
+		}
+		return nil
+	default:
+		return i18n.Err("err.unknown_targets_sub", sub)
+	}
 }
 
 // ---- super-feature --------------------------------------------------------
@@ -612,9 +702,6 @@ func runFeature(projectFlag string, args []string) error {
 		fmt.Println(msg)
 		return nil
 
-	case "target":
-		return runTarget(cfg, args)
-
 	case "down":
 		pos, _ := splitFlags(args)
 		if len(pos) < 1 {
@@ -674,140 +761,13 @@ func renameFeature(cfg *config.Config, slug, newName string) error {
 	return nil
 }
 
-// ---- target (add/remove/clear/list, with bulk) ----------------------------
-
-func runTarget(cfg *config.Config, args []string) error {
-	if len(args) == 0 {
-		return i18n.Err("err.usage_target")
-	}
-	verb, rest := args[0], args[1:]
-	switch verb {
-	case "list", "ls":
-		pos, _ := splitFlags(rest)
-		if len(pos) < 1 {
-			return i18n.Err("err.usage_target_list")
-		}
-		st, err := superfeature.LoadState(cfg, pos[0])
-		if err != nil {
-			return err
-		}
-		repoList, err := superfeature.Repos(cfg, pos[0])
-		if err != nil {
-			return err
-		}
-		fmt.Println(i18n.T("target.list_header", pos[0]))
-		for _, repo := range repoList {
-			fmt.Printf("  %-22s %s\n", repo, targets.LabelList(st[repo], pos[0]))
-		}
-		return nil
-	case "clear":
-		pos, _ := splitFlags(rest)
-		if len(pos) < 2 {
-			return i18n.Err("err.usage_target_clear")
-		}
-		if err := superfeature.ClearTarget(cfg, pos[0], pos[1]); err != nil {
-			return err
-		}
-		fmt.Println(i18n.T("target.cleared", pos[1]))
-		return nil
-	case "add", "remove", "rm":
-		return targetAddRemove(cfg, verb, rest)
-	default:
-		return i18n.Err("err.unknown_target_sub", verb)
-	}
-}
-
-// targetAddRemove parses `[--all | --repo r ...] <name> [<repo>] <setup> [wt-path]`
-// and adds/removes the setup on each selected repo.
-func targetAddRemove(cfg *config.Config, verb string, args []string) error {
-	all := false
-	var repoFlags, pos []string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "--all":
-			all = true
-		case a == "--repo":
-			if i+1 < len(args) {
-				repoFlags = append(repoFlags, args[i+1])
-				i++
-			}
-		case strings.HasPrefix(a, "--repo="):
-			repoFlags = append(repoFlags, strings.TrimPrefix(a, "--repo="))
-		default:
-			pos = append(pos, a)
-		}
-	}
-	usageErr := i18n.Err("err.usage_target_addremove", verb)
-	if len(pos) < 1 {
-		return usageErr
-	}
-	name, rest := pos[0], pos[1:]
-
-	var repoList []string
-	switch {
-	case all:
-		rs, err := superfeature.Repos(cfg, name)
-		if err != nil {
-			return err
-		}
-		repoList = rs
-	case len(repoFlags) > 0:
-		repoList = repoFlags
-	default:
-		if len(rest) < 1 {
-			return usageErr
-		}
-		repoList = []string{rest[0]}
-		rest = rest[1:]
-	}
-	if len(rest) < 1 {
-		return usageErr
-	}
-	src := rest[0]
-	if src == "auto" {
-		return i18n.Err("err.target_auto_clear")
-	}
-	t := targets.Target{Source: targets.Source(src)}
-	if len(rest) > 1 {
-		t.Worktree = rest[1]
-	}
-	if len(repoList) == 0 {
-		return i18n.Err("err.no_repos_selected", name)
-	}
-	for _, repo := range repoList {
-		if verb == "add" {
-			added, err := superfeature.AddTarget(cfg, name, repo, t)
-			if err != nil {
-				return err
-			}
-			if added {
-				fmt.Println(i18n.T("target.added", repo, t.Label(name)))
-			} else {
-				fmt.Println(i18n.T("target.exists", repo, t.Label(name)))
-			}
-		} else {
-			removed, err := superfeature.RemoveTarget(cfg, name, repo, t)
-			if err != nil {
-				return err
-			}
-			if removed {
-				fmt.Println(i18n.T("target.removed", repo, t.Label(name)))
-			} else {
-				fmt.Println(i18n.T("target.none", repo, t.Label(name)))
-			}
-		}
-	}
-	return nil
-}
-
 // ---- shared CLI helpers ---------------------------------------------------
 
 // splitFlags separates --flag / --flag=value / --flag value tokens from
 // positional args. Boolean flags map to "".
 func splitFlags(args []string) (pos []string, flags map[string]string) {
 	flags = map[string]string{}
-	valueFlags := map[string]bool{"from": true, "source": true, "name": true}
+	valueFlags := map[string]bool{"from": true, "source": true, "name": true, "targets": true}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if len(a) > 2 && a[:2] == "--" {

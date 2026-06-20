@@ -1,0 +1,7 @@
+# Committed inside a MULTI-SERVICE repo (or worktree), at <repo>/.workwood/targets.yml.
+# It maps a service name to a path within the repo; workwood's target editor then
+# expands that repo into one toggleable sub-node per service. A relative path is
+# resolved against the repo root; an absolute path is used as-is.
+api:    services/api
+web:    services/web
+worker: services/worker

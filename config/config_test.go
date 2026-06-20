@@ -40,25 +40,23 @@ func TestBuildDefaults(t *testing.T) {
 	if cfg.ProjectID != "pid" || cfg.ProjectSlug != "myslug" || cfg.ProjectName != "myslug" {
 		t.Fatalf("identity defaults wrong: %+v", cfg)
 	}
-	if cfg.StateDir != filepath.Join(data, "pid") {
-		t.Fatalf("state dir: %q", cfg.StateDir)
+	if cfg.StateDir != data {
+		t.Fatalf("state dir should equal the data dir: %q", cfg.StateDir)
 	}
-	if cfg.MainDir != filepath.Join(data, "pid", "main") || cfg.FeaturesDir != filepath.Join(data, "pid", "features") {
+	if cfg.MainDir != filepath.Join(data, "main") || cfg.FeaturesDir != filepath.Join(data, "features") {
 		t.Fatalf("default checkout dirs wrong: main=%q features=%q", cfg.MainDir, cfg.FeaturesDir)
 	}
-	if cfg.PluginsDir != filepath.Join("/some/super-repo", "workwood", "plugins") {
-		t.Fatalf("plugins dir: %q", cfg.PluginsDir)
+	if cfg.ActionsDir != filepath.Join("/some/super-repo", "workwood", "actions") {
+		t.Fatalf("actions dir: %q", cfg.ActionsDir)
 	}
 }
 
-func TestBuildStateOverrides(t *testing.T) {
+func TestBuildUsesStateName(t *testing.T) {
 	t.Setenv(EnvHome, t.TempDir())
 	data := t.TempDir()
 	pd := &projectdef.File{ID: "pid", Name: "myslug"}
-	stFile := filepath.Join(data, "pid", StateFileName)
-	if err := SaveState(stFile, &ProjectState{
-		Project: "pid", Name: "Custom", MainDir: "/custom/main", FeaturesDir: "/custom/feat",
-	}); err != nil {
+	stFile := filepath.Join(data, StateFileName)
+	if err := SaveState(stFile, &ProjectState{Project: "pid", Name: "Custom"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -66,8 +64,13 @@ func TestBuildStateOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ProjectName != "Custom" || cfg.MainDir != "/custom/main" || cfg.FeaturesDir != "/custom/feat" {
-		t.Fatalf("overrides not applied: %+v", cfg)
+	// The active name comes from state, but checkout paths are always under the
+	// data dir — never configurable.
+	if cfg.ProjectName != "Custom" {
+		t.Fatalf("active name = %q, want Custom", cfg.ProjectName)
+	}
+	if cfg.MainDir != filepath.Join(data, "main") || cfg.FeaturesDir != filepath.Join(data, "features") {
+		t.Fatalf("checkout dirs not derived from data dir: %+v", cfg)
 	}
 }
 
@@ -75,7 +78,7 @@ func TestBuildIdentityMismatch(t *testing.T) {
 	t.Setenv(EnvHome, t.TempDir())
 	data := t.TempDir()
 	pd := &projectdef.File{ID: "pid", Name: "myslug"}
-	stFile := filepath.Join(data, "pid", StateFileName)
+	stFile := filepath.Join(data, StateFileName)
 	if err := SaveState(stFile, &ProjectState{Project: "a-different-uuid"}); err != nil {
 		t.Fatal(err)
 	}

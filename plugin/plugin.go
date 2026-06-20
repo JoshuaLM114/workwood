@@ -51,10 +51,10 @@ type row struct {
 	workwoodDir string // <dir>/.workwood
 }
 
-// dirs returns the plugin search dirs in priority order: project-local first
-// (so a team can override a global default), then the user's global dir.
+// dirs returns the plugin search dirs. Plugins live only in the super-repo's
+// committed workwood/plugins folder — there is no global plugin dir.
 func dirs(cfg *config.Config) []string {
-	return []string{cfg.ProjectPluginsDir, cfg.GlobalPluginsDir}
+	return []string{cfg.PluginsDir}
 }
 
 // Find returns the path of an executable plugin named name, searching the
@@ -100,7 +100,7 @@ func List(cfg *config.Config) []string {
 // Run resolves the feature's repos to targets, writes the context file, and execs
 // the named plugin in the given mode (run|init) with the context in its
 // environment (stdio inherited so a tmux plugin can take over the terminal).
-func Run(cfg *config.Config, m *manifest.Manifest, st *targets.State, name, mode string) error {
+func Run(cfg *config.Config, m *manifest.Manifest, featTargets map[string][]targets.Target, name, mode string) error {
 	if mode == "" {
 		mode = ModeRun
 	}
@@ -108,12 +108,12 @@ func Run(cfg *config.Config, m *manifest.Manifest, st *targets.State, name, mode
 	if path == "" {
 		avail := List(cfg)
 		if len(avail) == 0 {
-			return i18n.Err("err.no_plugin_none", name, cfg.ProjectPluginsDir, cfg.GlobalPluginsDir)
+			return i18n.Err("err.no_plugin_none", name, cfg.PluginsDir)
 		}
 		return i18n.Err("err.no_plugin_avail", name, strings.Join(avail, ", "))
 	}
 
-	rows := resolveRows(cfg, m, st)
+	rows := resolveRows(cfg, m, featTargets)
 
 	featureDir := cfg.FeatureDir(m.Feature)
 	if err := os.MkdirAll(featureDir, 0o755); err != nil {
@@ -134,7 +134,7 @@ func Run(cfg *config.Config, m *manifest.Manifest, st *targets.State, name, mode
 	cmd := exec.Command(path)
 	cmd.Dir = cfg.Root
 	cmd.Env = append(os.Environ(),
-		"WORKWOOD_PROJECT="+cfg.Project,
+		"WORKWOOD_PROJECT="+cfg.ProjectSlug,
 		"WORKWOOD_FEATURE="+m.Feature,
 		"WORKWOOD_PLUGIN="+name,
 		"WORKWOOD_MODE="+mode,
@@ -173,7 +173,7 @@ func envKey(k string) string {
 // manifest order, applying each repo's target (or the automatic default). Repos
 // targeted "ignore" are dropped entirely. Any non-built-in target string is
 // handed through verbatim with the base clone as its dir.
-func resolveRows(cfg *config.Config, m *manifest.Manifest, st *targets.State) []row {
+func resolveRows(cfg *config.Config, m *manifest.Manifest, featTargets map[string][]targets.Target) []row {
 	// Per repo: primary worktree (canonical <feature>/<repo> preferred), and a
 	// lookup of every worktree by manifest path so an explicit target can pick one.
 	type wt struct{ dir, branch string }
@@ -210,7 +210,7 @@ func resolveRows(cfg *config.Config, m *manifest.Manifest, st *targets.State) []
 		base := cfg.BaseRepo(repo)
 		primaryE := primary[repo]
 		fb := primaryE.branch
-		list := st.TargetsFor(repo)
+		list := featTargets[repo]
 
 		// No setups → the automatic default: worktree if checked out, else main.
 		if len(list) == 0 {

@@ -22,37 +22,56 @@ import (
 	"github.com/JoshuaLM114/workwood/plugin"
 	"github.com/JoshuaLM114/workwood/projectdef"
 	"github.com/JoshuaLM114/workwood/targets"
+	"github.com/google/uuid"
 )
 
-// LoadState returns a feature's per-developer run-target state (empty if none).
-func LoadState(cfg *config.Config, name string) (*targets.State, error) {
-	return targets.Load(cfg.StatePath(name), name)
+// LoadState returns a feature's per-developer run-target map (repo → setups),
+// empty when the feature has no setups. slug is the feature's filename stem.
+func LoadState(cfg *config.Config, slug string) (map[string][]targets.Target, error) {
+	m, err := manifest.Load(cfg.ManifestPath(slug))
+	if err != nil {
+		return nil, err
+	}
+	st, err := config.LoadState(cfg.StateFile)
+	if err != nil {
+		return nil, err
+	}
+	if m.ID == "" {
+		return map[string][]targets.Target{}, nil
+	}
+	return st.Features[m.ID].Targets, nil
 }
 
 // AddTarget appends a setup to a repo's additive target list. Returns whether it
 // was newly added (false = already present).
-func AddTarget(cfg *config.Config, name, repo string, t targets.Target) (bool, error) {
+func AddTarget(cfg *config.Config, slug, repo string, t targets.Target) (bool, error) {
 	var added bool
-	err := updateTarget(cfg, name, func(s *targets.State) { added = s.Add(repo, t) })
+	err := updateTarget(cfg, slug, func(uuid string, s *config.ProjectState) {
+		added = s.AddTarget(uuid, repo, t)
+	})
 	return added, err
 }
 
 // RemoveTarget drops a matching setup from a repo's list. Returns whether one
 // was removed.
-func RemoveTarget(cfg *config.Config, name, repo string, t targets.Target) (bool, error) {
+func RemoveTarget(cfg *config.Config, slug, repo string, t targets.Target) (bool, error) {
 	var removed bool
-	err := updateTarget(cfg, name, func(s *targets.State) { removed = s.Remove(repo, t) })
+	err := updateTarget(cfg, slug, func(uuid string, s *config.ProjectState) {
+		removed = s.RemoveTarget(uuid, repo, t)
+	})
 	return removed, err
 }
 
 // ClearTarget returns a repo to the automatic default (drops all its setups).
-func ClearTarget(cfg *config.Config, name, repo string) error {
-	return updateTarget(cfg, name, func(s *targets.State) { s.Clear(repo) })
+func ClearTarget(cfg *config.Config, slug, repo string) error {
+	return updateTarget(cfg, slug, func(uuid string, s *config.ProjectState) {
+		s.ClearTarget(uuid, repo)
+	})
 }
 
 // Repos returns the distinct repo names in a feature's manifest, in order.
-func Repos(cfg *config.Config, name string) ([]string, error) {
-	m, err := manifest.Load(cfg.ManifestPath(name))
+func Repos(cfg *config.Config, slug string) ([]string, error) {
+	m, err := manifest.Load(cfg.ManifestPath(slug))
 	if err != nil {
 		return nil, err
 	}
@@ -67,31 +86,57 @@ func Repos(cfg *config.Config, name string) ([]string, error) {
 	return out, nil
 }
 
-func updateTarget(cfg *config.Config, name string, mutate func(*targets.State)) error {
-	// Validate the feature exists (and version-check it) before touching targets.
-	if _, err := manifest.Load(cfg.ManifestPath(name)); err != nil {
-		return err
-	}
-	s, err := targets.Load(cfg.StatePath(name), name)
+// updateTarget loads the manifest (for the feature UUID that keys its state), the
+// project state, applies mutate, and saves. A manifest without a UUID hasn't been
+// initialised — direct the user to `workwood init`.
+func updateTarget(cfg *config.Config, slug string, mutate func(uuid string, s *config.ProjectState)) error {
+	m, err := manifest.Load(cfg.ManifestPath(slug))
 	if err != nil {
 		return err
 	}
-	mutate(s)
-	return targets.Save(cfg.StatePath(name), s)
+	if err := checkProject(cfg, m); err != nil {
+		return err
+	}
+	if m.ID == "" {
+		return i18n.Err("err.feature_not_adopted", slug)
+	}
+	s, err := config.LoadState(cfg.StateFile)
+	if err != nil {
+		return err
+	}
+	s.EnsureFeature(m.ID, slug)
+	mutate(m.ID, s)
+	return config.SaveState(cfg.StateFile, s)
+}
+
+// checkProject errors when a manifest's parent UUID disagrees with the resolved
+// project — i.e. a manifest copied in from a different super-repo.
+func checkProject(cfg *config.Config, m *manifest.Manifest) error {
+	if m.Project != "" && m.Project != cfg.ProjectID {
+		return i18n.Err("err.manifest_wrong_project", m.Feature, m.Project, cfg.ProjectID)
+	}
+	return nil
 }
 
 // Compose runs a plugin against a feature in the given mode (run|init), handing
 // it the resolved active context (each repo's target + source dir).
-func Compose(cfg *config.Config, name, pluginName, mode string) error {
-	m, err := manifest.Load(cfg.ManifestPath(name))
+func Compose(cfg *config.Config, slug, pluginName, mode string) error {
+	m, err := manifest.Load(cfg.ManifestPath(slug))
 	if err != nil {
 		return err
 	}
-	s, err := targets.Load(cfg.StatePath(name), name)
+	if err := checkProject(cfg, m); err != nil {
+		return err
+	}
+	st, err := config.LoadState(cfg.StateFile)
 	if err != nil {
 		return err
 	}
-	return plugin.Run(cfg, m, s, pluginName, mode)
+	var ft map[string][]targets.Target
+	if m.ID != "" {
+		ft = st.Features[m.ID].Targets
+	}
+	return plugin.Run(cfg, m, ft, pluginName, mode)
 }
 
 // Plugins lists the plugins available to a project (project dir + global dir).
@@ -116,23 +161,34 @@ func ResolveBranchWith(feature, sub string, omitFeature bool) string {
 	return feature + "/" + sub
 }
 
-// Create writes a starter manifest for a new super-feature. It refuses to clobber
-// an existing feature.
-func Create(cfg *config.Config, name, desc string) error {
-	path := cfg.ManifestPath(name)
+// Create writes a starter manifest for a new super-feature: it mints the feature
+// UUID, links it to the project, and records it in this developer's state
+// (active_name defaulting to the slug). It refuses to clobber an existing feature.
+func Create(cfg *config.Config, slug, desc string) error {
+	path := cfg.ManifestPath(slug)
 	if _, err := os.Stat(path); err == nil {
 		return i18n.Err("err.manifest_exists", path)
 	}
-	if err := os.MkdirAll(cfg.FeatureDir(name), 0o755); err != nil {
+	if err := os.MkdirAll(cfg.FeatureDir(slug), 0o755); err != nil {
 		return err
 	}
 	m := &manifest.Manifest{
-		Feature:     name,
+		ID:          uuid.NewString(),
+		Project:     cfg.ProjectID,
+		Feature:     slug,
 		Description: desc,
 		Created:     time.Now().Format("2006-01-02"),
 		Worktrees:   []manifest.Worktree{},
 	}
-	return manifest.Save(path, m)
+	if err := manifest.Save(path, m); err != nil {
+		return err
+	}
+	st, err := config.LoadState(cfg.StateFile)
+	if err != nil {
+		return err
+	}
+	st.EnsureFeature(m.ID, slug)
+	return config.SaveState(cfg.StateFile, st)
 }
 
 // AddSpec describes a worktree the caller wants created.
@@ -442,8 +498,11 @@ func Delete(cfg *config.Config, name string, pruneBranches bool) error {
 			}
 		}
 	}
-	// Drop the per-developer state too (best-effort; may not exist).
-	_ = os.Remove(cfg.StatePath(name))
+	// Drop this feature's entry from the developer's state (best-effort).
+	if st, e := config.LoadState(cfg.StateFile); e == nil {
+		delete(st.Features, m.ID)
+		_ = config.SaveState(cfg.StateFile, st)
+	}
 	return os.Remove(path)
 }
 

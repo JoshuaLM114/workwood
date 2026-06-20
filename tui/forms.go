@@ -184,17 +184,18 @@ func newBulkTargetForm(repos []string, v *bulkVals) *huh.Form {
 	return form(huh.NewGroup(fields...).Title(i18n.T("tui.form.bulk_title")))
 }
 
-// settingsVals binds the settings form to ~/.workwood/config.yaml fields.
+// settingsVals binds the settings form: global app settings (language,
+// update-check) plus this project's local active_name + checkout-path overrides.
 type settingsVals struct {
 	lang        string
-	defProject  string
+	updateCheck bool
+	name        string // project active_name (local)
 	mainDir     string
 	featuresDir string
 }
 
-// newSettingsForm builds the dotfile-settings editor: UI language, default
-// project, and the active project's on-disk paths. Submitting saves; esc cancels.
-func newSettingsForm(langs, projects []string, project string, v *settingsVals) *huh.Form {
+// newSettingsForm builds the settings editor. Submitting saves; esc cancels.
+func newSettingsForm(langs []string, v *settingsVals) *huh.Form {
 	endonym := map[string]string{
 		"en": i18n.T("tui.settings.lang_en"),
 		"ja": i18n.T("tui.settings.lang_ja"),
@@ -207,10 +208,6 @@ func newSettingsForm(langs, projects []string, project string, v *settingsVals) 
 		}
 		langOpts = append(langOpts, huh.NewOption(label, c))
 	}
-	projOpts := make([]huh.Option[string], 0, len(projects))
-	for _, p := range projects {
-		projOpts = append(projOpts, huh.NewOption(p, p))
-	}
 	return form(
 		huh.NewGroup(
 			huh.NewSelect[string]().
@@ -219,35 +216,50 @@ func newSettingsForm(langs, projects []string, project string, v *settingsVals) 
 				Description(i18n.T("tui.settings.lang_desc")).
 				Options(langOpts...).
 				Value(&v.lang),
-			huh.NewSelect[string]().
-				Key("def").
-				Title(i18n.T("tui.settings.default_project")).
-				Description(i18n.T("tui.settings.default_project_desc")).
-				Options(projOpts...).
-				Value(&v.defProject),
+			huh.NewSelect[bool]().
+				Key("update").
+				Title(i18n.T("tui.settings.update_check")).
+				Description(i18n.T("tui.settings.update_check_desc")).
+				Options(
+					huh.NewOption(i18n.T("tui.settings.update_on"), true),
+					huh.NewOption(i18n.T("tui.settings.update_off"), false),
+				).
+				Value(&v.updateCheck),
+			huh.NewInput().
+				Key("name").
+				Title(i18n.T("tui.settings.active_name")).
+				Description(i18n.T("tui.settings.active_name_desc")).
+				Value(&v.name),
 			huh.NewInput().
 				Key("main").
-				Title(i18n.T("tui.settings.main_dir", project)).
+				Title(i18n.T("tui.settings.main_dir")).
 				Value(&v.mainDir).
 				Validate(required),
 			huh.NewInput().
 				Key("features").
-				Title(i18n.T("tui.settings.features_dir", project)).
+				Title(i18n.T("tui.settings.features_dir")).
 				Value(&v.featuresDir).
 				Validate(required),
 		).Title(i18n.T("tui.settings.title")),
 	)
 }
 
-// metaVals holds the edit-description form binding.
+// metaVals holds the edit-meta form binding (feature active_name + description).
 type metaVals struct {
+	name string
 	desc string
 }
 
-// newMetaForm edits a feature's description (the name is fixed once created).
+// newMetaForm edits a feature's active_name + description. The slug (branch
+// prefix / filename) is fixed once created and is not editable here.
 func newMetaForm(v *metaVals) *huh.Form {
 	return form(
 		huh.NewGroup(
+			huh.NewInput().
+				Key("name").
+				Title(i18n.T("tui.form.active_name")).
+				Description(i18n.T("tui.form.active_name_desc")).
+				Value(&v.name),
 			huh.NewText().
 				Key("desc").
 				Title(i18n.T("tui.form.description")).

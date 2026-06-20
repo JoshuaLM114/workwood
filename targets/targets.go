@@ -1,7 +1,8 @@
-// Package targets stores per-developer "run targets" for a super-feature: where
+// Package targets defines a super-feature's per-developer "run targets": where
 // each repo should be sourced from when a plugin composes behaviour. These are
-// personal, machine-local choices (not the shared manifest), so they live under
-// ~/.workwood/state/<project>/ rather than in the committed super-repo.
+// personal choices (not the shared manifest); they are PERSISTED inside the
+// developer's workwood-state.yml (see package config), so this package holds only
+// the data type + label helpers — no file I/O.
 //
 // Targets are ADDITIVE and per-repo: a repo carries an ordered LIST of setups,
 // and composing emits one context row per setup — so the same repo can take part
@@ -20,13 +21,7 @@
 // else main).
 package targets
 
-import (
-	"os"
-	"path/filepath"
-	"strings"
-
-	"gopkg.in/yaml.v3"
-)
+import "strings"
 
 // Source is where a repo is sourced from (a built-in or a user-defined string).
 type Source string
@@ -81,91 +76,36 @@ func LabelList(ts []Target, feature string) string {
 	return strings.Join(parts, ", ")
 }
 
-// State is a feature's per-repo setup lists. It has no version of its own: the
-// super-feature's version lives in its manifest, which is loaded (and
-// version-checked) before state on every path that touches a feature.
-type State struct {
-	Feature string              `yaml:"feature"`
-	Targets map[string][]Target `yaml:"targets"`
-}
-
-// Load reads a feature's run-target state. A missing file yields empty state
-// (every repo on the automatic default), not an error.
-func Load(path, feature string) (*State, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &State{Feature: feature, Targets: map[string][]Target{}}, nil
-		}
-		return nil, err
+// AddTo appends t to a repo's setup list within the given map, skipping an exact
+// duplicate. Returns the (possibly new) map and whether it was newly added. Used
+// by config.ProjectState to mutate a feature's persisted targets.
+func AddTo(m map[string][]Target, repo string, t Target) (map[string][]Target, bool) {
+	if m == nil {
+		m = map[string][]Target{}
 	}
-	var s State
-	if err := yaml.Unmarshal(data, &s); err != nil {
-		return nil, err
-	}
-	if s.Targets == nil {
-		s.Targets = map[string][]Target{}
-	}
-	if s.Feature == "" {
-		s.Feature = feature
-	}
-	return &s, nil
-}
-
-// Save writes the state, or removes the file when no setups remain so the
-// feature falls fully back to the automatic default.
-func Save(path string, s *State) error {
-	if len(s.Targets) == 0 {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	data, err := yaml.Marshal(s)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o644)
-}
-
-// TargetsFor returns the ordered setups for a repo (nil if none).
-func (s *State) TargetsFor(repo string) []Target { return s.Targets[repo] }
-
-// Add appends a setup to a repo's list, skipping an exact duplicate. Returns
-// false if it was already present.
-func (s *State) Add(repo string, t Target) bool {
-	if s.Targets == nil {
-		s.Targets = map[string][]Target{}
-	}
-	for _, e := range s.Targets[repo] {
+	for _, e := range m[repo] {
 		if e.Equal(t) {
-			return false
+			return m, false
 		}
 	}
-	s.Targets[repo] = append(s.Targets[repo], t)
-	return true
+	m[repo] = append(m[repo], t)
+	return m, true
 }
 
-// Remove drops a matching setup from a repo's list (and the key if it empties).
-// Returns false if no matching setup was found.
-func (s *State) Remove(repo string, t Target) bool {
-	list := s.Targets[repo]
+// RemoveFrom drops a matching setup from a repo's list (and the key if it
+// empties). Returns whether one was removed.
+func RemoveFrom(m map[string][]Target, repo string, t Target) bool {
+	list := m[repo]
 	for i, e := range list {
 		if e.Equal(t) {
 			list = append(list[:i], list[i+1:]...)
 			if len(list) == 0 {
-				delete(s.Targets, repo)
+				delete(m, repo)
 			} else {
-				s.Targets[repo] = list
+				m[repo] = list
 			}
 			return true
 		}
 	}
 	return false
 }
-
-// Clear removes all of a repo's setups, returning it to the automatic default.
-func (s *State) Clear(repo string) { delete(s.Targets, repo) }

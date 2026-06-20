@@ -2,11 +2,11 @@
 // "super-features" that can span repos and hold multiple branches of the same
 // repo (which submodules can't).
 //
-// workwood is a GLOBAL CLI. It operates on PROJECTS you register in
-// ~/.workwood/config.yaml: each project is a team "super-repo" holding a
-// workwood.yaml (its repo definitions) plus super-features/<name>.yaml manifests
-// (committed + shared). Your registry entry records where YOU keep the base
-// clones and feature worktrees on disk.
+// workwood has NO project registry. You run it from inside a super-repo (it walks
+// up to a workwood.yml) or point at one with -p <path>. The super-repo holds the
+// committed project def + plugins + super-feature manifests; your per-developer
+// state lives in $WORKWOOD_DATA/<project-uuid>/workwood-state.yml; ~/.workwood
+// keeps only global app settings (language, update-check, the data-dir fallback).
 //
 // User-facing text is loaded from the message catalog (package i18n) so the CLI
 // can run in English or Japanese; pick with `workwood lang ja` or $WORKWOOD_LANG.
@@ -21,20 +21,21 @@ import (
 
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
+	"github.com/JoshuaLM114/workwood/manifest"
 	"github.com/JoshuaLM114/workwood/plugin"
-	"github.com/JoshuaLM114/workwood/plugins"
 	"github.com/JoshuaLM114/workwood/projectdef"
 	"github.com/JoshuaLM114/workwood/repos"
-	"github.com/JoshuaLM114/workwood/sandbox"
 	"github.com/JoshuaLM114/workwood/superfeature"
 	"github.com/JoshuaLM114/workwood/targets"
 	"github.com/JoshuaLM114/workwood/tui"
+	"github.com/JoshuaLM114/workwood/update"
 	"github.com/JoshuaLM114/workwood/version"
+	"github.com/google/uuid"
 )
 
 func main() {
-	initLang()    // resolve + load the message catalog before any output
-	seedPlugins() // best-effort: populate ~/.workwood/plugins with the defaults
+	initLang()         // resolve + load the message catalog before any output
+	notifyIfOutdated() // best-effort: at most once a day, hint when a newer release exists
 
 	args := os.Args[1:]
 	projectFlag, args := extractProjectFlag(args)
@@ -48,12 +49,10 @@ func main() {
 	switch cmd {
 	case "init":
 		must(runInit(args))
-	case "sandbox":
-		must(runSandbox(args))
 	case "lang", "language":
 		must(runLang(args))
 	case "project", "projects":
-		must(runProject(args))
+		must(runProject(projectFlag, args))
 	case "repos":
 		must(runRepos(projectFlag, args))
 	case "super-feature", "sf", "feature":
@@ -75,28 +74,26 @@ func main() {
 	}
 }
 
-// initLang resolves the active language (env > config > $LANG > en) and loads the
-// catalog. The registry read is best-effort so a broken config still shows text.
+// initLang resolves the active language (env > app setting > $LANG > en) and
+// loads the catalog. The app-settings read is best-effort.
 func initLang() {
-	cfgLang := ""
-	if reg, _, err := config.LoadRegistry(); err == nil {
-		cfgLang = reg.Language
+	lang := ""
+	if app, _, err := config.LoadApp(); err == nil {
+		lang = app.Language
 	}
-	i18n.Init(i18n.Resolve(cfgLang))
+	i18n.Init(i18n.Resolve(lang))
 }
 
-// seedPlugins writes the bundled default plugins into ~/.workwood/plugins on
-// first run (never clobbering an edited one). Best-effort.
-func seedPlugins() {
-	home, err := config.Home()
+// notifyIfOutdated prints a one-line stderr notice when a newer release exists.
+func notifyIfOutdated() {
+	app, home, err := config.LoadApp()
 	if err != nil {
 		return
 	}
-	_, _ = plugins.Seed(config.GlobalPluginsDir(home))
+	update.Notify(home, version.Software, app.UpdateCheckEnabled())
 }
 
-// extractProjectFlag pulls a -p/--project value out of args (anywhere), so it
-// can precede or follow the subcommand. Returns the value and the args without it.
+// extractProjectFlag pulls a -p/--project <path> value out of args (anywhere).
 func extractProjectFlag(args []string) (string, []string) {
 	project := ""
 	out := make([]string, 0, len(args))
@@ -119,7 +116,72 @@ func extractProjectFlag(args []string) (string, []string) {
 	return project, out
 }
 
-// runTUI launches the interactive editor for the selected project.
+// ---- project resolution ---------------------------------------------------
+
+// loadProject locates the super-repo (cwd walk-up or -p path), resolves the data
+// dir, and builds the Config + loads its project definition.
+func loadProject(projectFlag string) (*config.Config, *projectdef.File, error) {
+	root, pd, err := config.LocateProject(projectFlag)
+	if err != nil {
+		return nil, nil, err
+	}
+	dataDir, err := ensureDataDir()
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg, err := config.Build(root, pd, dataDir)
+	return cfg, pd, err
+}
+
+// resolveCfg is loadProject when only the Config is needed.
+func resolveCfg(projectFlag string) (*config.Config, error) {
+	cfg, _, err := loadProject(projectFlag)
+	return cfg, err
+}
+
+// ensureDataDir resolves $WORKWOOD_DATA → saved data_dir → an interactive prompt
+// (saved back to app settings). Errors when unset and non-interactive.
+func ensureDataDir() (string, error) {
+	if d := strings.TrimRight(os.Getenv(config.EnvData), "/"); d != "" {
+		return d, nil
+	}
+	app, home, err := config.LoadApp()
+	if err != nil {
+		return "", err
+	}
+	if app.DataDir != "" {
+		return app.DataDir, nil
+	}
+	if !interactive() {
+		return "", i18n.Err("err.no_data_dir")
+	}
+	def := defaultDataDir()
+	d := prompt(i18n.T("init.data_dir_prompt"), def)
+	if abs, e := filepath.Abs(d); e == nil {
+		d = abs
+	}
+	app.DataDir = d
+	if err := config.SaveApp(home, app); err != nil {
+		return "", err
+	}
+	return d, nil
+}
+
+// defaultDataDir suggests ~/workwood-data (external to ~/.workwood).
+func defaultDataDir() string {
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, "workwood-data")
+	}
+	return "./workwood-data"
+}
+
+// interactive reports whether stdin is a terminal (so prompting is sensible).
+func interactive() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// runTUI launches the interactive editor for the resolved project.
 func runTUI(projectFlag string) error {
 	cfg, pd, err := loadProject(projectFlag)
 	if err != nil {
@@ -128,23 +190,10 @@ func runTUI(projectFlag string) error {
 	return tui.Run(cfg, pd)
 }
 
-// loadProject resolves the selected project and loads its definition.
-func loadProject(projectFlag string) (*config.Config, *projectdef.File, error) {
-	cfg, err := config.Resolve(projectFlag)
-	if err != nil {
-		return nil, nil, err
-	}
-	pd, err := projectdef.Load(cfg.ProjectDef)
-	if err != nil {
-		return nil, nil, err
-	}
-	return cfg, pd, nil
-}
-
 // ---- lang -----------------------------------------------------------------
 
 func runLang(args []string) error {
-	reg, home, err := config.LoadRegistry()
+	app, home, err := config.LoadApp()
 	if err != nil {
 		return err
 	}
@@ -152,157 +201,207 @@ func runLang(args []string) error {
 		fmt.Println(i18n.T("lang.current", i18n.Lang(), strings.Join(i18n.Supported, ", ")))
 		return nil
 	}
-	lang := i18n.Resolve(args[0])
 	if !i18n.IsSupported(args[0]) {
 		return i18n.Err("err.unknown_lang", args[0], strings.Join(i18n.Supported, ", "))
 	}
-	reg.Language = lang
-	if err := config.SaveRegistry(home, reg); err != nil {
+	lang := i18n.Resolve(args[0])
+	app.Language = lang
+	if err := config.SaveApp(home, app); err != nil {
 		return err
 	}
-	i18n.Init(lang) // confirm in the newly selected language
+	i18n.Init(lang)
 	fmt.Println(i18n.T("lang.set", lang))
 	return nil
 }
 
-// ---- sandbox --------------------------------------------------------------
+// ---- init -----------------------------------------------------------------
 
-func runSandbox(args []string) error {
-	pos, _ := splitFlags(args)
-	dir := "./workwood-sandbox"
-	if len(pos) > 0 {
-		dir = pos[0]
-	}
-	res, err := sandbox.Create(dir)
-	if err != nil {
-		return err
-	}
-	fmt.Print(i18n.T("sandbox.created", res.Dir))
-	fmt.Print(i18n.T("sandbox.activate", res.Activate))
-	fmt.Print(i18n.T("sandbox.explore"))
-	fmt.Print(i18n.T("sandbox.walkthrough", filepath.Join(res.Dir, "README.md")))
-	return nil
-}
-
-// ---- init / project registry ---------------------------------------------
-
+// runInit scaffolds (idempotently) a project: ensures workwood.yml carries a
+// UUID, creates the committed workwood/{plugins,super-features} dirs, resolves
+// the data dir, and writes the developer's workwood-state.yml — tracking any
+// already-committed super-features. Safe to re-run; only fills what's missing.
 func runInit(args []string) error {
-	pos, flags := splitFlags(args)
+	pos, _ := splitFlags(args)
 	path := "."
 	if len(pos) > 0 {
 		path = pos[0]
 	}
-	abs, err := filepath.Abs(path)
+	root, err := filepath.Abs(path)
 	if err != nil {
 		return err
 	}
-	name := flags["name"]
-	if name == "" {
-		name = filepath.Base(abs)
-	}
 
-	// Scaffold a starter workwood.yaml + super-features/ if the dir has none yet.
-	defPath := filepath.Join(abs, config.ProjectDefName)
-	if _, err := os.Stat(defPath); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Join(abs, config.ManifestsDirName), 0o755); err != nil {
-			return err
-		}
-		skeleton := &projectdef.File{Org: "CHANGE_ME", Repos: []projectdef.Repo{}}
-		if err := projectdef.Save(defPath, skeleton); err != nil {
-			return err
-		}
-		fmt.Println(i18n.T("init.scaffolded", defPath))
-	} else if err != nil {
-		return err
-	}
-
-	reg, home, err := config.LoadRegistry()
+	pd, wroteDef, err := ensureDef(root)
 	if err != nil {
 		return err
 	}
-	existing := reg.Projects[name]
-	mainDir := firstNonEmpty(flags["main"], existing.MainDir)
-	featuresDir := firstNonEmpty(flags["features"], existing.FeaturesDir)
-	if mainDir == "" {
-		mainDir = prompt(i18n.T("init.prompt_main"), filepath.Join(abs, ".workwood-data", "main"))
-	}
-	if featuresDir == "" {
-		featuresDir = prompt(i18n.T("init.prompt_features"), filepath.Join(abs, ".workwood-data", "features"))
-	}
-	if mainDir == "" || featuresDir == "" {
-		return i18n.Err("err.dirs_required")
-	}
-
-	mainAbs, _ := filepath.Abs(mainDir)
-	featAbs, _ := filepath.Abs(featuresDir)
-	reg.Projects[name] = config.ProjectEntry{Path: abs, MainDir: mainAbs, FeaturesDir: featAbs}
-	if reg.DefaultProject == "" {
-		reg.DefaultProject = name
-	}
-	if err := config.SaveRegistry(home, reg); err != nil {
+	pluginsDir := filepath.Join(root, config.WorkwoodDirName, config.PluginsDirName)
+	manifestsDir := filepath.Join(root, config.WorkwoodDirName, config.ManifestsDirName)
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
 		return err
 	}
-	fmt.Print(i18n.T("init.registered", name, abs, mainAbs, featAbs))
-	if reg.DefaultProject == name {
-		fmt.Println(i18n.T("init.set_default"))
+	if err := os.MkdirAll(manifestsDir, 0o755); err != nil {
+		return err
 	}
-	fmt.Println(i18n.T("init.next", name))
+
+	dataDir, err := ensureDataDir()
+	if err != nil {
+		return err
+	}
+	stateDir := filepath.Join(dataDir, pd.ID)
+	stateFile := filepath.Join(stateDir, config.StateFileName)
+	st, err := config.LoadState(stateFile)
+	if err != nil {
+		return err
+	}
+	if st.Project != "" && st.Project != pd.ID {
+		return i18n.Err("err.project_identity_mismatch", stateFile, st.Project, pd.ID)
+	}
+	st.Project = pd.ID
+	if st.Name == "" {
+		st.Name = projectSlug(pd, root)
+	}
+
+	// Track every committed super-feature locally, back-filling any manifest that
+	// predates UUIDs (writes the committed file for the user to commit).
+	mans, err := manifest.List(manifestsDir)
+	if err != nil {
+		return err
+	}
+	tracked := 0
+	for _, m := range mans {
+		if m.ID == "" {
+			m.ID = uuid.NewString()
+			m.Project = pd.ID
+			if err := manifest.Save(filepath.Join(manifestsDir, m.Feature+".yaml"), m); err != nil {
+				return err
+			}
+		}
+		if st.EnsureFeature(m.ID, m.Feature) {
+			tracked++
+		}
+	}
+	if err := config.SaveState(stateFile, st); err != nil {
+		return err
+	}
+
+	if err := ensureDataDirIgnored(root, dataDir); err != nil {
+		return err
+	}
+
+	fmt.Print(i18n.T("init.done", root, filepath.Join(root, config.ProjectDefName), pluginsDir, manifestsDir, stateFile))
+	if wroteDef {
+		fmt.Println(i18n.T("init.commit_hint", config.ProjectDefName))
+	}
+	if tracked > 0 {
+		fmt.Println(i18n.T("init.tracked", tracked))
+	}
 	return nil
 }
 
-func runProject(args []string) error {
-	sub := "list"
+// ensureDef loads the project def, creating it with a fresh UUID when absent and
+// back-filling a missing id/name on an existing one. Returns whether it wrote the
+// committed file (so the caller can nudge the user to commit it).
+func ensureDef(root string) (*projectdef.File, bool, error) {
+	defPath := filepath.Join(root, config.ProjectDefName)
+	if _, err := os.Stat(defPath); os.IsNotExist(err) {
+		pd := &projectdef.File{
+			ID:    uuid.NewString(),
+			Name:  filepath.Base(root),
+			Org:   "CHANGE_ME",
+			Repos: []projectdef.Repo{},
+		}
+		if err := projectdef.Save(defPath, pd); err != nil {
+			return nil, false, err
+		}
+		fmt.Println(i18n.T("init.scaffolded", defPath))
+		return pd, true, nil
+	}
+	pd, err := projectdef.Load(defPath)
+	if err != nil {
+		return nil, false, err
+	}
+	changed := false
+	if pd.ID == "" {
+		pd.ID = uuid.NewString()
+		changed = true
+	}
+	if pd.Name == "" {
+		pd.Name = filepath.Base(root)
+		changed = true
+	}
+	if changed {
+		if err := projectdef.Save(defPath, pd); err != nil {
+			return nil, false, err
+		}
+	}
+	return pd, changed, nil
+}
+
+// ensureDataDirIgnored adds the data dir to .gitignore only when it lives inside
+// the super-repo (so a developer who points WORKWOOD_DATA in-repo won't commit
+// their checkouts). A data dir outside the repo needs no entry.
+func ensureDataDirIgnored(root, dataDir string) error {
+	rel, err := filepath.Rel(root, dataDir)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return nil
+	}
+	gi := filepath.Join(root, ".gitignore")
+	entry := "/" + filepath.ToSlash(rel) + "/"
+	data, err := os.ReadFile(gi)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == entry {
+			return nil
+		}
+	}
+	body := string(data)
+	if body != "" && !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	return os.WriteFile(gi, []byte(body+entry+"\n"), 0o644)
+}
+
+// projectSlug is the project's original_name (workwood.yml name), else basename.
+func projectSlug(pd *projectdef.File, root string) string {
+	if pd.Name != "" {
+		return pd.Name
+	}
+	return filepath.Base(root)
+}
+
+// ---- project (info / rename) ----------------------------------------------
+
+func runProject(projectFlag string, args []string) error {
+	cfg, _, err := loadProject(projectFlag)
+	if err != nil {
+		return err
+	}
+	sub := "info"
 	if len(args) > 0 {
 		sub = args[0]
 		args = args[1:]
 	}
-	reg, home, err := config.LoadRegistry()
-	if err != nil {
-		return err
-	}
 	switch sub {
-	case "list":
-		if len(reg.Projects) == 0 {
-			fmt.Println(i18n.T("project.none"))
-			return nil
-		}
-		for name, e := range reg.Projects {
-			marker := "  "
-			if name == reg.DefaultProject {
-				marker = "* "
-			}
-			fmt.Printf("%s%-20s %s\n", marker, name, e.Path)
-			fmt.Print(i18n.T("project.list_paths", e.MainDir, e.FeaturesDir))
-		}
+	case "info":
+		fmt.Print(i18n.T("project.info", cfg.ProjectName, cfg.ProjectSlug, cfg.ProjectID, cfg.Root, cfg.MainDir, cfg.FeaturesDir, cfg.StateFile))
 		return nil
-	case "use":
+	case "rename":
 		if len(args) < 1 {
-			return i18n.Err("err.usage_project_use")
+			return i18n.Err("err.usage_project_rename")
 		}
-		if _, ok := reg.Projects[args[0]]; !ok {
-			return i18n.Err("err.unknown_project", args[0])
-		}
-		reg.DefaultProject = args[0]
-		if err := config.SaveRegistry(home, reg); err != nil {
+		st, err := config.LoadState(cfg.StateFile)
+		if err != nil {
 			return err
 		}
-		fmt.Println(i18n.T("project.default_set", args[0]))
-		return nil
-	case "remove", "rm":
-		if len(args) < 1 {
-			return i18n.Err("err.usage_project_remove")
-		}
-		if _, ok := reg.Projects[args[0]]; !ok {
-			return i18n.Err("err.unknown_project", args[0])
-		}
-		delete(reg.Projects, args[0])
-		if reg.DefaultProject == args[0] {
-			reg.DefaultProject = ""
-		}
-		if err := config.SaveRegistry(home, reg); err != nil {
+		st.Project = cfg.ProjectID
+		st.Name = args[0]
+		if err := config.SaveState(cfg.StateFile, st); err != nil {
 			return err
 		}
-		fmt.Println(i18n.T("project.removed", args[0]))
+		fmt.Println(i18n.T("project.renamed", args[0]))
 		return nil
 	default:
 		return i18n.Err("err.unknown_project_sub", sub)
@@ -351,7 +450,7 @@ func runCompose(projectFlag string, args []string) error {
 	if len(pos) < 2 {
 		return i18n.Err("err.usage_compose")
 	}
-	cfg, err := config.Resolve(projectFlag)
+	cfg, err := resolveCfg(projectFlag)
 	if err != nil {
 		return err
 	}
@@ -363,13 +462,13 @@ func runCompose(projectFlag string, args []string) error {
 }
 
 func runPlugins(projectFlag string) error {
-	cfg, err := config.Resolve(projectFlag)
+	cfg, err := resolveCfg(projectFlag)
 	if err != nil {
 		return err
 	}
 	ps := superfeature.Plugins(cfg)
 	if len(ps) == 0 {
-		fmt.Println(i18n.T("plugins.none", cfg.GlobalPluginsDir, cfg.ProjectPluginsDir))
+		fmt.Println(i18n.T("plugins.none", cfg.PluginsDir))
 		return nil
 	}
 	for _, p := range ps {
@@ -391,7 +490,7 @@ func runFeature(projectFlag string, args []string) error {
 		return nil
 	}
 
-	cfg, err := config.Resolve(projectFlag)
+	cfg, err := resolveCfg(projectFlag)
 	if err != nil {
 		return err
 	}
@@ -406,8 +505,15 @@ func runFeature(projectFlag string, args []string) error {
 			fmt.Println(i18n.T("feature.none"))
 			return nil
 		}
+		st, _ := config.LoadState(cfg.StateFile)
 		for _, f := range feats {
-			fmt.Printf("%-24s %s\n", f.Feature, i18n.T("feature.list_meta", len(f.Worktrees), f.Description))
+			name := f.Feature
+			if st != nil {
+				if fs, ok := st.FeatureByUUID(f.ID); ok {
+					name = fs.DisplayName()
+				}
+			}
+			fmt.Printf("%-24s %s\n", name, i18n.T("feature.list_meta", len(f.Worktrees), f.Description))
 		}
 		return nil
 
@@ -426,6 +532,13 @@ func runFeature(projectFlag string, args []string) error {
 		fmt.Println(i18n.T("feature.created", cfg.ManifestPath(pos[0])))
 		fmt.Println(i18n.T("feature.add_hint", pos[0], pos[0]))
 		return nil
+
+	case "rename":
+		pos, _ := splitFlags(args)
+		if len(pos) < 2 {
+			return i18n.Err("err.usage_sf_rename")
+		}
+		return renameFeature(cfg, pos[0], pos[1])
 
 	case "add":
 		pd, err := projectdef.Load(cfg.ProjectDef)
@@ -536,6 +649,31 @@ func runFeature(projectFlag string, args []string) error {
 	}
 }
 
+// renameFeature sets a super-feature's local active_name (keyed by its UUID),
+// leaving the slug — and therefore the manifest filename + branches — untouched.
+func renameFeature(cfg *config.Config, slug, newName string) error {
+	m, err := manifest.Load(cfg.ManifestPath(slug))
+	if err != nil {
+		return err
+	}
+	if m.ID == "" {
+		return i18n.Err("err.feature_not_adopted", slug)
+	}
+	st, err := config.LoadState(cfg.StateFile)
+	if err != nil {
+		return err
+	}
+	st.EnsureFeature(m.ID, slug)
+	f := st.Features[m.ID]
+	f.Name = newName
+	st.Features[m.ID] = f
+	if err := config.SaveState(cfg.StateFile, st); err != nil {
+		return err
+	}
+	fmt.Println(i18n.T("feature.renamed", slug, newName))
+	return nil
+}
+
 // ---- target (add/remove/clear/list, with bulk) ----------------------------
 
 func runTarget(cfg *config.Config, args []string) error {
@@ -553,13 +691,13 @@ func runTarget(cfg *config.Config, args []string) error {
 		if err != nil {
 			return err
 		}
-		repos, err := superfeature.Repos(cfg, pos[0])
+		repoList, err := superfeature.Repos(cfg, pos[0])
 		if err != nil {
 			return err
 		}
 		fmt.Println(i18n.T("target.list_header", pos[0]))
-		for _, repo := range repos {
-			fmt.Printf("  %-22s %s\n", repo, targets.LabelList(st.TargetsFor(repo), pos[0]))
+		for _, repo := range repoList {
+			fmt.Printf("  %-22s %s\n", repo, targets.LabelList(st[repo], pos[0]))
 		}
 		return nil
 	case "clear":
@@ -606,21 +744,21 @@ func targetAddRemove(cfg *config.Config, verb string, args []string) error {
 	}
 	name, rest := pos[0], pos[1:]
 
-	var repos []string
+	var repoList []string
 	switch {
 	case all:
 		rs, err := superfeature.Repos(cfg, name)
 		if err != nil {
 			return err
 		}
-		repos = rs
+		repoList = rs
 	case len(repoFlags) > 0:
-		repos = repoFlags
+		repoList = repoFlags
 	default:
 		if len(rest) < 1 {
 			return usageErr
 		}
-		repos = []string{rest[0]}
+		repoList = []string{rest[0]}
 		rest = rest[1:]
 	}
 	if len(rest) < 1 {
@@ -634,10 +772,10 @@ func targetAddRemove(cfg *config.Config, verb string, args []string) error {
 	if len(rest) > 1 {
 		t.Worktree = rest[1]
 	}
-	if len(repos) == 0 {
+	if len(repoList) == 0 {
 		return i18n.Err("err.no_repos_selected", name)
 	}
-	for _, repo := range repos {
+	for _, repo := range repoList {
 		if verb == "add" {
 			added, err := superfeature.AddTarget(cfg, name, repo, t)
 			if err != nil {
@@ -669,7 +807,7 @@ func targetAddRemove(cfg *config.Config, verb string, args []string) error {
 // positional args. Boolean flags map to "".
 func splitFlags(args []string) (pos []string, flags map[string]string) {
 	flags = map[string]string{}
-	valueFlags := map[string]bool{"from": true, "source": true, "main": true, "features": true, "name": true}
+	valueFlags := map[string]bool{"from": true, "source": true, "name": true}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if len(a) > 2 && a[:2] == "--" {

@@ -1,9 +1,11 @@
 # Example project definition. This file lives at the ROOT of a team "super-repo"
-# (committed + shared); `workwood init` reads it. Each developer registers the
-# super-repo in their own ~/.workwood/config.yaml, choosing where THEY keep base
-# clones and feature worktrees on disk.
+# (committed + shared) alongside a workwood/ folder (plugins/ + super-features/).
+# Run `workwood init` here: it back-fills `id` (the project UUID) and `name`, then
+# creates each developer's own state under $WORKWOOD_DATA/<id>/workwood-state.yml.
 #
 # Schema:
+#   id    — project UUID (filled by `workwood init`; commit it to share identity)
+#   name  — canonical project name / slug (filled by init; immutable)
 #   org   — default GitHub owner for entries that don't set their own `url`
 #   host  — optional; informational (cloning goes through `gh repo clone`)
 #   repos[].name           — directory name under main_dir and the repo name
@@ -11,6 +13,7 @@
 #                            new feature branch is cut from)
 #   repos[].url            — optional; overrides `<org>/<name>` (a different owner)
 
+name: example
 org: my-org
 
 repos:

@@ -30,8 +30,10 @@ type Worktree struct {
 // key/values handed to plugins via the context (e.g. a deploy plugin's
 // namespace) — workwood itself never interprets them, keeping core unopinionated.
 type Manifest struct {
-	Version     int               `yaml:"version"` // on-disk schema version (see version pkg)
-	Feature     string            `yaml:"feature"`
+	Version     int               `yaml:"version"`           // on-disk schema version (see version pkg)
+	ID          string            `yaml:"id,omitempty"`      // super-feature UUID (committed; identity)
+	Project     string            `yaml:"project,omitempty"` // parent project UUID (links back to workwood.yml id)
+	Feature     string            `yaml:"feature"`           // original_name / slug: filename stem + branch prefix
 	Description string            `yaml:"description"`
 	Created     string            `yaml:"created"`
 	Vars        map[string]string `yaml:"vars,omitempty"`

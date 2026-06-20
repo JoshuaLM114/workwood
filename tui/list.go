@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/superfeature"
 	"github.com/charmbracelet/bubbles/list"
@@ -8,9 +9,12 @@ import (
 )
 
 // featureItem is one row in the feature picker. The synthetic create row sorts
-// to the top so "new feature" is always one keystroke away.
+// to the top so "new feature" is always one keystroke away. name is the editable
+// active_name (shown/filtered); slug is the immutable handle used to open the
+// feature.
 type featureItem struct {
 	name     string
+	slug     string
 	desc     string
 	count    int
 	create   bool
@@ -52,12 +56,19 @@ type listModel struct {
 func newListModel(m *Model) listModel {
 	items := []list.Item{featureItem{create: true}, featureItem{settings: true}}
 	feats, _ := superfeature.List(m.cfg) // a load error surfaces elsewhere; show what we can
+	st, _ := config.LoadState(m.cfg.StateFile)
 	for _, f := range feats {
-		items = append(items, featureItem{name: f.Feature, desc: f.Description, count: len(f.Worktrees)})
+		name := f.Feature
+		if st != nil {
+			if fs, ok := st.FeatureByUUID(f.ID); ok {
+				name = fs.DisplayName()
+			}
+		}
+		items = append(items, featureItem{name: name, slug: f.Feature, desc: f.Description, count: len(f.Worktrees)})
 	}
 	delegate := list.NewDefaultDelegate()
 	l := list.New(items, delegate, 0, 0)
-	l.Title = i18n.T("tui.list_title", m.cfg.Project)
+	l.Title = i18n.T("tui.list_title", m.cfg.ProjectName)
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false) // the library help is English; we render a localized footer
@@ -85,8 +96,8 @@ func (lm listModel) update(m *Model, msg tea.Msg) (listModel, tea.Cmd) {
 			if it.settings {
 				return lm, func() tea.Msg { return openSettingsMsg{} }
 			}
-			name := it.name
-			return lm, func() tea.Msg { return openEditorMsg{feature: name} }
+			slug := it.slug
+			return lm, func() tea.Msg { return openEditorMsg{feature: slug} }
 		}
 	}
 	var cmd tea.Cmd

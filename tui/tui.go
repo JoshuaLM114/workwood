@@ -10,7 +10,6 @@ package tui
 import (
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
@@ -80,10 +79,11 @@ type Model struct {
 	createForm *huh.Form
 	createVals createVals
 
-	settingsForm *huh.Form
-	settingsVals settingsVals
-	settingsReg  *config.Registry
-	settingsHome string
+	settingsForm  *huh.Form
+	settingsVals  settingsVals
+	settingsApp   *config.AppSettings
+	settingsState *config.ProjectState
+	settingsHome  string
 
 	width, height int
 	err           error
@@ -117,25 +117,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.createForm.Init()
 
 	case openSettingsMsg:
-		reg, home, err := config.LoadRegistry()
+		app, home, err := config.LoadApp()
 		if err != nil {
 			m.err = err
 			return m, nil
 		}
-		entry := reg.Projects[m.cfg.Project]
-		names := make([]string, 0, len(reg.Projects))
-		for n := range reg.Projects {
-			names = append(names, n)
+		st, err := config.LoadState(m.cfg.StateFile)
+		if err != nil {
+			m.err = err
+			return m, nil
 		}
-		sort.Strings(names)
-		m.settingsReg, m.settingsHome = reg, home
+		m.settingsApp, m.settingsState, m.settingsHome = app, st, home
 		m.settingsVals = settingsVals{
 			lang:        i18n.Lang(),
-			defProject:  reg.DefaultProject,
-			mainDir:     entry.MainDir,
-			featuresDir: entry.FeaturesDir,
+			updateCheck: app.UpdateCheckEnabled(),
+			name:        m.cfg.ProjectName,
+			mainDir:     m.cfg.MainDir,
+			featuresDir: m.cfg.FeaturesDir,
 		}
-		m.settingsForm = newSettingsForm(i18n.Supported, names, m.cfg.Project, &m.settingsVals).WithWidth(min(72, m.width-4))
+		m.settingsForm = newSettingsForm(i18n.Supported, &m.settingsVals).WithWidth(min(72, m.width-4))
 		m.screen = screenSettings
 		return m, m.settingsForm.Init()
 
@@ -235,24 +235,36 @@ func (m *Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch m.settingsForm.State {
 	case huh.StateCompleted:
-		reg := m.settingsReg
-		reg.Language = m.settingsVals.lang
-		reg.DefaultProject = m.settingsVals.defProject
-		entry := reg.Projects[m.cfg.Project]
-		if abs, err := filepath.Abs(m.settingsVals.mainDir); err == nil {
-			entry.MainDir = abs
-		}
-		if abs, err := filepath.Abs(m.settingsVals.featuresDir); err == nil {
-			entry.FeaturesDir = abs
-		}
-		reg.Projects[m.cfg.Project] = entry
-		if err := config.SaveRegistry(m.settingsHome, reg); err != nil {
+		// Global app settings (language, update-check).
+		app := m.settingsApp
+		app.Language = m.settingsVals.lang
+		uc := m.settingsVals.updateCheck
+		app.UpdateCheck = &uc
+		if err := config.SaveApp(m.settingsHome, app); err != nil {
 			m.err = err
 			return m, nil
 		}
-		// Apply immediately: switch language + repoint the active config's paths.
+		// Project-local state (active_name + checkout-path overrides).
+		st := m.settingsState
+		st.Project = m.cfg.ProjectID
+		st.Name = m.settingsVals.name
+		mainDir := m.settingsVals.mainDir
+		if abs, err := filepath.Abs(mainDir); err == nil {
+			mainDir = abs
+		}
+		featuresDir := m.settingsVals.featuresDir
+		if abs, err := filepath.Abs(featuresDir); err == nil {
+			featuresDir = abs
+		}
+		st.MainDir, st.FeaturesDir = mainDir, featuresDir
+		if err := config.SaveState(m.cfg.StateFile, st); err != nil {
+			m.err = err
+			return m, nil
+		}
+		// Apply immediately: switch language + repoint the active config.
 		i18n.Init(m.settingsVals.lang)
-		m.cfg.MainDir, m.cfg.FeaturesDir = entry.MainDir, entry.FeaturesDir
+		m.cfg.MainDir, m.cfg.FeaturesDir = mainDir, featuresDir
+		m.cfg.ProjectName = m.settingsVals.name
 		m.settingsForm = nil
 		m.list = newListModel(m)
 		m.list.list.SetSize(m.width-4, m.height-4)

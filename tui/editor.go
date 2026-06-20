@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/manifest"
 	"github.com/JoshuaLM114/workwood/superfeature"
@@ -48,14 +49,15 @@ type editorRow struct {
 // worktrees, lets the user stage additions and removals (and edit the
 // description), then applies the whole delta at once on save.
 type editorModel struct {
-	m    *Model
-	name string
+	m      *Model
+	name   string // feature slug (immutable handle)
+	active string // active_name (display)
 
 	man   *manifest.Manifest
 	desc  string
 	rows  []editorRow
 	table table.Model
-	state *targets.State
+	state map[string][]targets.Target
 
 	form       *huh.Form
 	formMode   formMode
@@ -71,17 +73,25 @@ type editorModel struct {
 	height int
 }
 
-// newEditorModel loads the feature and builds its table.
-func newEditorModel(m *Model, name string) (*editorModel, error) {
-	man, err := manifest.Load(m.cfg.ManifestPath(name))
+// newEditorModel loads the feature (by slug) and builds its table.
+func newEditorModel(m *Model, slug string) (*editorModel, error) {
+	man, err := manifest.Load(m.cfg.ManifestPath(slug))
 	if err != nil {
 		return nil, err
 	}
-	st, err := superfeature.LoadState(m.cfg, name)
+	ps, err := config.LoadState(m.cfg.StateFile)
 	if err != nil {
 		return nil, err
 	}
-	e := &editorModel{m: m, name: name, man: man, desc: man.Description, state: st}
+	active := slug
+	var st map[string][]targets.Target
+	if man.ID != "" {
+		if fs, ok := ps.FeatureByUUID(man.ID); ok {
+			active = fs.DisplayName()
+			st = fs.Targets
+		}
+	}
+	e := &editorModel{m: m, name: slug, active: active, man: man, desc: man.Description, state: st}
 	e.table = table.New(
 		table.WithColumns(editorColumns(m.width)),
 		table.WithFocused(true),
@@ -108,7 +118,7 @@ func editorColumns(width int) []table.Column {
 
 // targetLabel is the comma-joined list of a repo's setups, or "auto".
 func (e *editorModel) targetLabel(repo string) string {
-	return targets.LabelList(e.state.TargetsFor(repo), e.name)
+	return targets.LabelList(e.state[repo], e.name)
 }
 
 // dirty reports whether there are unsaved staged changes.
@@ -336,9 +346,28 @@ func (e *editorModel) openAddForm() {
 }
 
 func (e *editorModel) openMetaForm() {
-	e.metaVals = metaVals{desc: e.desc}
+	e.metaVals = metaVals{name: e.active, desc: e.desc}
 	e.form = newMetaForm(&e.metaVals).WithWidth(min(72, e.width-2))
 	e.formMode = formMeta
+}
+
+// applyRename persists a new active_name locally (keyed by the feature UUID). It
+// changes only the display label — never the slug, manifest filename, or branches.
+func (e *editorModel) applyRename(newName string) {
+	if newName == "" || e.man.ID == "" || newName == e.active {
+		return
+	}
+	st, err := config.LoadState(e.m.cfg.StateFile)
+	if err != nil {
+		return
+	}
+	st.EnsureFeature(e.man.ID, e.name)
+	f := st.Features[e.man.ID]
+	f.Name = newName
+	st.Features[e.man.ID] = f
+	if config.SaveState(e.m.cfg.StateFile, st) == nil {
+		e.active = newName
+	}
 }
 
 // selectedRepo is the repo of the highlighted table row, or "".
@@ -449,6 +478,7 @@ func (e *editorModel) onFormDone() {
 		e.status = i18n.T("tui.status.staged_add")
 	case formMeta:
 		e.desc = e.metaVals.desc
+		e.applyRename(strings.TrimSpace(e.metaVals.name))
 		e.status = i18n.T("tui.status.desc_updated")
 	case formTarget:
 		if t, ok := parseSetup(e.setupVals); ok {
@@ -558,7 +588,7 @@ func (e *editorModel) View() string {
 	}
 
 	var b strings.Builder
-	header := fmt.Sprintf("%s  %s", titleStyle.Render(e.name), dimStyle.Render(orDash(e.desc)))
+	header := fmt.Sprintf("%s  %s", titleStyle.Render(e.active), dimStyle.Render(orDash(e.desc)))
 	b.WriteString(header + "\n\n")
 	b.WriteString(e.table.View() + "\n\n")
 

@@ -1,4 +1,4 @@
-// Package projectdef reads (and scaffolds) a project's workwood.yaml — the base
+// Package projectdef reads (and scaffolds) a project's workwood.yml — the base
 // repos that make up a super-project and each repo's default branch. It is the
 // committed, team-shared definition that lives at the root of a super-repo.
 package projectdef
@@ -18,14 +18,23 @@ type Repo struct {
 	URL           string `yaml:"url,omitempty"` // optional; overrides <host>/<org>/<name>
 }
 
-// File is the parsed workwood.yaml.
+// File is the parsed workwood.yml — the committed project definition at the
+// super-repo root. ID + Name are the project's shared identity: ID is the UUID
+// that links to this developer's external state dir, Name is the immutable
+// original_name (the slug used for display defaults; never a branch source).
 type File struct {
+	ID    string `yaml:"id,omitempty"`   // project UUID (committed; identity)
+	Name  string `yaml:"name,omitempty"` // original_name — canonical label, immutable
 	Org   string `yaml:"org"`
 	Host  string `yaml:"host,omitempty"` // optional git host (default: github.com via gh)
 	Repos []Repo `yaml:"repos"`
 }
 
-// Load parses the workwood.yaml at path.
+// HasIdentity reports whether the project def carries a UUID yet. A legacy or
+// freshly hand-written file without one is back-filled by `workwood init`.
+func (f *File) HasIdentity() bool { return f.ID != "" }
+
+// Load parses the workwood.yml at path.
 func Load(path string) (*File, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -41,7 +50,7 @@ func Load(path string) (*File, error) {
 	return &f, nil
 }
 
-// Save writes a workwood.yaml to path (used by `workwood init` when scaffolding a
+// Save writes a workwood.yml to path (used by `workwood init` when scaffolding a
 // fresh super-repo).
 func Save(path string, f *File) error {
 	var buf strings.Builder

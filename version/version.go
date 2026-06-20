@@ -10,16 +10,38 @@
 // (forward migration).
 package version
 
-import "github.com/JoshuaLM114/workwood/i18n"
+import (
+	"runtime/debug"
+	"strings"
 
-const (
-	// Software is this build's version (semantic). Bumped on releases.
-	Software = "0.1.0"
-
-	// Schema is the current on-disk file-format version. Bump it whenever a
-	// change to the manifest/state/registry layout would confuse an older build.
-	Schema = 1
+	"github.com/JoshuaLM114/workwood/i18n"
 )
+
+// Software is this build's version (semantic). The literal here is the
+// development fallback; when installed via `go install …@vX` (or a tagged
+// release build), init() below overwrites it with the real module version, so
+// `workwood version` and the update check self-report correctly without
+// hand-editing this file or passing -ldflags.
+var Software = "0.1.0"
+
+// Schema is the current on-disk file-format version. Bump it whenever a change
+// to the manifest/state/app-settings layout would confuse an older build.
+//
+// v2: identity refactor — projects + super-features carry UUIDs, per-developer
+// state moved into an external WORKWOOD_DATA/<project-uuid>/workwood-state.yml,
+// and the global config dropped its project registry for app-settings only.
+const Schema = 2
+
+func init() {
+	// go install stamps the resolved module version into the build info (e.g.
+	// "v0.2.0", or a "v0.0.0-<date>-<sha>" pseudo-version for an untagged commit).
+	// "(devel)" means a plain `go build` from a working tree — keep the fallback.
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if v := bi.Main.Version; v != "" && v != "(devel)" {
+			Software = strings.TrimPrefix(v, "v")
+		}
+	}
+}
 
 // CheckSchema returns an error when fileSchema is newer than this build's Schema.
 // what names the file for the message (e.g. "manifest foo.yaml").

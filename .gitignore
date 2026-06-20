@@ -1,7 +1,10 @@
 # Compiled workwood binary
 /bin/
+/.vscode
 
 # Local-only mise overrides (never committed)
 mise.local.toml
 .mise.local.toml
 .mise/
+
+notes.md

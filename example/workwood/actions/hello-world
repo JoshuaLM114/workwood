@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# workwood-action: print each target's .workwood/hello-world.txt
+#
+# A tiny demo action. workwood hands it the selected targets as a YAML map
+# (key: /abs/path) — both as $1 and via $WORKWOOD_TARGETS. This action walks into
+# each target path and prints its .workwood/hello-world.txt.
+#
+# Seed those files first with the standalone helper at the project root:
+#     ./seed-hello-world.sh <path-to-the-feature's-worktrees>
+#
+#   workwood action hello-world <feature>
+set -euo pipefail
+
+# The targets file is $1 when run by workwood; fall back to the env var otherwise.
+targets="${1:-${WORKWOOD_TARGETS:?run via: workwood action hello-world <feature>}}"
+
+while IFS= read -r line; do
+    key=${line%%:*}        # the target's name
+    path=${line#*: }       # its absolute path
+    [ -n "$key" ] && [ "$key" != "$line" ] || continue   # skip blank / "{}" lines
+
+    file="$path/.workwood/hello-world.txt"
+    echo "== $key ($path) =="
+    if [ -f "$file" ]; then
+        cat "$file"
+    else
+        echo "(no $file — run ./seed-hello-world.sh on this feature's worktrees)"
+    fi
+done < "$targets"
+
+# Pause so the output stays readable: when launched from the workwood TUI, the
+# screen is restored on exit and would otherwise wipe this. Read from /dev/tty so
+# it works regardless of where stdin came from (the targets file was piped above).
+echo
+printf 'Program finished — press Enter to return to workwood… '
+read -r _ < /dev/tty 2>/dev/null || true
+echo

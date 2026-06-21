@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# workwood-action: one tmux window per target
 # DEFAULT workwood ACTION — tmux. Boots a tmux session with one window per selected
 # target, cd'd into its path. Targets come from WORKWOOD_TARGETS (a YAML key->path
 # map); the session is named after the active super-feature.

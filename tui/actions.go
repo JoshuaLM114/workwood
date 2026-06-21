@@ -22,7 +22,7 @@ const (
 	afRenameKey
 	afSavePreset
 	afLoadPreset
-	afRunAction
+	afChooseAction
 )
 
 // actionsModel is the per-feature Actions screen: a toggleable tree of candidate
@@ -39,6 +39,10 @@ type actionsModel struct {
 	visible   []int        // node indices shown given collapse state
 	collapsed map[int]bool // serviceParent node index → collapsed
 	cursor    int          // index into visible
+
+	actions   []action.Action // discovered (marked + executable) actions
+	needChmod []string        // marked files that aren't executable (common mistake)
+	selected  string          // the chosen action's name (the top "dropdown")
 
 	form       *huh.Form
 	formMode   actionsFormMode
@@ -70,8 +74,35 @@ func newActionsModel(m *Model, slug string) (*actionsModel, error) {
 	if removed := targetcfg.Prune(m.cfg, working); len(removed) > 0 {
 		a.save()
 	}
+	a.refreshActions()
 	a.rebuild()
 	return a, nil
+}
+
+// refreshActions re-scans workwood/actions for marked actions, keeping the current
+// selection if it's still present (else selecting the first, or none).
+func (a *actionsModel) refreshActions() {
+	a.actions, a.needChmod = action.Scan(a.m.cfg)
+	for _, act := range a.actions {
+		if act.Name == a.selected {
+			return // still valid
+		}
+	}
+	if len(a.actions) > 0 {
+		a.selected = a.actions[0].Name
+	} else {
+		a.selected = ""
+	}
+}
+
+// selectedDesc returns the marker label of the currently-selected action.
+func (a *actionsModel) selectedDesc() string {
+	for _, act := range a.actions {
+		if act.Name == a.selected {
+			return act.Description
+		}
+	}
+	return ""
 }
 
 func (a *actionsModel) rebuild() {
@@ -184,19 +215,36 @@ func (a *actionsModel) Update(msg tea.Msg) (*actionsModel, tea.Cmd) {
 			a.form = newSelectForm(i18n.T("tui.title.load_preset"), presets, &a.selVals).WithWidth(min(72, a.width-4))
 			a.formMode = afLoadPreset
 			return a, a.form.Init()
-		case "R":
-			acts := action.List(a.m.cfg)
-			if len(acts) == 0 {
-				a.status = i18n.T("tui.actions.no_actions")
+		case "d":
+			if len(a.actions) == 0 {
+				a.status = warnStyle.Render(i18n.T("tui.actions.none_found", a.m.cfg.ActionsDir))
 				return a, nil
 			}
-			a.selVals = selectVals{}
-			a.form = newSelectForm(i18n.T("tui.title.run_action"), acts, &a.selVals).WithWidth(min(72, a.width-4))
-			a.formMode = afRunAction
+			a.selVals = selectVals{choice: a.selected}
+			a.form = newSelectForm(i18n.T("tui.title.choose_action"), actionNames(a.actions), &a.selVals).WithWidth(min(72, a.width-4))
+			a.formMode = afChooseAction
 			return a, a.form.Init()
+		case "R":
+			if a.selected == "" {
+				a.status = warnStyle.Render(i18n.T("tui.actions.none_found", a.m.cfg.ActionsDir))
+				return a, nil
+			}
+			return a, a.runAction(a.selected)
+		case "f":
+			a.refreshActions()
+			a.status = okStyle.Render(i18n.T("tui.actions.refreshed", len(a.actions)))
 		}
 	}
 	return a, nil
+}
+
+// actionNames extracts the names from discovered actions (for the picker).
+func actionNames(as []action.Action) []string {
+	names := make([]string, len(as))
+	for i, a := range as {
+		names[i] = a.Name
+	}
+	return names
 }
 
 func (a *actionsModel) toggle() {
@@ -235,8 +283,8 @@ func (a *actionsModel) onFormDone() tea.Cmd {
 		a.savePreset()
 	case afLoadPreset:
 		a.loadPreset(a.selVals.choice)
-	case afRunAction:
-		return a.runAction(a.selVals.choice)
+	case afChooseAction:
+		a.selected = a.selVals.choice
 	}
 	return nil
 }
@@ -319,6 +367,26 @@ func (a *actionsModel) View() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render(i18n.T("tui.actions.title", a.man.Feature)) + "\n\n")
 
+	// Top panel: the action "dropdown" (selected action), or a no-actions notice.
+	if a.selected == "" {
+		b.WriteString(warnStyle.Render(i18n.T("tui.actions.none_found", a.m.cfg.ActionsDir)) + "\n")
+		if len(a.needChmod) > 0 {
+			b.WriteString(errStyle.Render(i18n.T("actions.need_chmod", strings.Join(a.needChmod, ", "))) + "\n")
+		}
+	} else {
+		line := i18n.T("tui.actions.selected", a.selected)
+		if d := a.selectedDesc(); d != "" {
+			line += "  " + dimStyle.Render(d)
+		}
+		b.WriteString(line + "\n")
+	}
+	sepW := a.width
+	if sepW <= 0 || sepW > 64 {
+		sepW = 64
+	}
+	b.WriteString(dimStyle.Render(strings.Repeat("─", sepW)) + "\n\n")
+
+	// Bottom panel: the target tree.
 	if len(a.visible) == 0 {
 		b.WriteString(dimStyle.Render(i18n.T("tui.actions.tree_empty")) + "\n")
 	}
@@ -368,8 +436,8 @@ func (a *actionsModel) formTitle() string {
 		return i18n.T("tui.title.save_preset")
 	case afLoadPreset:
 		return i18n.T("tui.title.load_preset")
-	case afRunAction:
-		return i18n.T("tui.title.run_action")
+	case afChooseAction:
+		return i18n.T("tui.title.choose_action")
 	}
 	return ""
 }

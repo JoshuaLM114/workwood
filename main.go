@@ -498,13 +498,20 @@ func runActions(projectFlag string) error {
 	if err != nil {
 		return err
 	}
-	as := action.List(cfg)
+	as, needChmod := action.Scan(cfg)
+	if len(needChmod) > 0 {
+		fmt.Println(i18n.T("actions.need_chmod", strings.Join(needChmod, ", ")))
+	}
 	if len(as) == 0 {
 		fmt.Println(i18n.T("actions.none", cfg.ActionsDir))
 		return nil
 	}
 	for _, a := range as {
-		fmt.Println(a)
+		if a.Description != "" {
+			fmt.Printf("%-20s %s\n", a.Name, a.Description)
+		} else {
+			fmt.Println(a.Name)
+		}
 	}
 	return nil
 }

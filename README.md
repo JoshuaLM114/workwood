@@ -195,29 +195,45 @@ working set).
 ### Actions — scripts in `workwood/actions/`
 
 An **action is just a script** (any language) committed in the super-repo's
-**`workwood/actions/`** folder — the only action source, shared with the team.
-`workwood init` creates it empty; add your own and commit them. Three worked
-references ship in [`example/workwood/actions/`](example/workwood/actions):
+**`workwood/actions/`** folder that **opts in** with a marker comment near the top:
+
+```sh
+#!/usr/bin/env bash
+# workwood-action: deploy to dev      # the text after ':' is an optional label
+```
+
+The marker is how workwood tells an action from a stray helper executable —
+there's no way to validate a script's argument signature, so an explicit opt-in is
+the safe substitute (it's grepped, never run). A file without it is ignored.
+
+The file must also be **executable** (`chmod +x`), since workwood runs it directly
+— a marked-but-non-executable file is reported so you know to `chmod +x` it.
+
+`workwood init` creates the folder empty; add your own and commit them. Three
+worked references ship in [`example/workwood/actions/`](example/workwood/actions):
 **`helloworld`** (greets each target), **`tmux`** (one window per target), and
 **`ssh`** (pick a target, open a shell there). Copy any into your project.
 
 ```sh
-workwood actions                         # list available actions
+workwood actions                         # list available (marked) actions
 workwood action helloworld voice         # run against voice's working set
 workwood action tmux voice --targets api-only   # …or against a saved preset
 ```
 
-Run an action from the TUI Actions screen with **R** (it picks up the current
-working set; a terminal-takeover action like tmux suspends the TUI and resumes
-when it exits).
+In the TUI Actions screen (`o` from a feature) the top panel is an action
+**dropdown** — `d` to choose, `R` to run it, `f` to re-scan the folder; the bottom
+panel is the target tree. If the folder has no marked actions you'll see a notice,
+but you can still edit targets. A terminal-takeover action like tmux suspends the
+TUI and resumes when it exits.
 
 ### The context handed to an action
 
-workwood writes the enabled targets to a YAML file and execs the action with:
+workwood writes the enabled targets to a YAML file, passes its path as **`$1`**,
+and also execs the action with:
 
 | Env | Meaning |
 | --- | --- |
-| `WORKWOOD_TARGETS` | path to `context.yml`, a `key: /abs/path` map of the enabled targets |
+| `WORKWOOD_TARGETS` | path to `context.yml` (same as `$1`), a `key: /abs/path` map of the enabled targets |
 | `WORKWOOD_FEATURE` | the active super-feature slug |
 | `WORKWOOD_ACTION` | the action's name |
 | `WORKWOOD_LANG` | the active UI language (`en`/`ja`) — localize your own output if you like |

@@ -15,7 +15,8 @@ func TestCommandContextAndEnv(t *testing.T) {
 	if err := os.MkdirAll(actionsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(actionsDir, "noop"), []byte("#!/bin/sh\ntrue\n"), 0o755); err != nil {
+	// A valid action must carry the opt-in marker.
+	if err := os.WriteFile(filepath.Join(actionsDir, "noop"), []byte("#!/bin/sh\n# workwood-action: noop\ntrue\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{Root: dir, ActionsDir: actionsDir, FeaturesDir: dir}
@@ -48,6 +49,45 @@ func TestCommandContextAndEnv(t *testing.T) {
 		if strings.Contains(env, gone+"=") {
 			t.Errorf("env should not contain dropped var %q", gone)
 		}
+	}
+}
+
+func TestListMarker(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string, mode os.FileMode) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("deploy", "#!/bin/sh\n# workwood-action: ship it\ntrue\n", 0o755) // marked + exec → listed
+	write("greet", "#!/bin/sh\n#   workwood-action\necho hi\n", 0o755)      // marked, no desc → listed
+	write("helper", "#!/bin/sh\necho not an action\n", 0o755)               // exec, no marker → ignored
+	write("notexec", "#!/bin/sh\n# workwood-action: x\n", 0o644)            // marked but not exec → ignored
+	write("decoy", "#!/bin/sh\n# workwood-actions-helper here\n", 0o755)    // lookalike token → ignored
+
+	cfg := &config.Config{ActionsDir: dir}
+	got := List(cfg)
+	if len(got) != 2 {
+		t.Fatalf("want 2 actions, got %d: %+v", len(got), got)
+	}
+	// Sorted: deploy, greet.
+	if got[0].Name != "deploy" || got[0].Description != "ship it" {
+		t.Errorf("deploy: %+v", got[0])
+	}
+	if got[1].Name != "greet" || got[1].Description != "" {
+		t.Errorf("greet: %+v", got[1])
+	}
+	if Find(cfg, "helper") != "" {
+		t.Error("Find should reject an unmarked executable")
+	}
+	if Find(cfg, "deploy") == "" {
+		t.Error("Find should accept a marked action")
+	}
+
+	// Scan should report the marked-but-non-executable file (a common mistake).
+	_, needChmod := Scan(cfg)
+	if len(needChmod) != 1 || needChmod[0] != "notexec" {
+		t.Errorf("needChmod = %v, want [notexec]", needChmod)
 	}
 }
 

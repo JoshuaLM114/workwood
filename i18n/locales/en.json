@@ -143,11 +143,10 @@
   "targets.list_header": "saved target presets:",
   "targets.show_header": "targets for %s:",
   "tui.actions.title": "Actions · %s",
-  "tui.actions.help": "↑/↓ move · space toggle · enter expand · p add-path · r rename · S save · L load · R run · esc back",
+  "tui.actions.help": "↑/↓ · space toggle · enter expand · p add · r rename · S/L preset · d action · R run · f refresh · esc back",
   "tui.actions.tree_empty": "no targets — add reference repos in workwood.yml or worktrees to this feature",
   "tui.actions.missing": "(missing)",
   "tui.actions.need_key": "no git branch found — enter a key for this path",
-  "tui.actions.no_actions": "no actions in this project's workwood/actions/",
   "tui.actions.no_presets": "no saved presets yet",
   "tui.actions.toggle_first": "enable a target first (space), then rename",
   "tui.actions.added_path": "added %q",
@@ -165,7 +164,6 @@
   "tui.title.rename_key": "Rename target",
   "tui.title.save_preset": "Save target preset",
   "tui.title.load_preset": "Load target preset",
-  "tui.title.run_action": "Run an action",
   "tui.menu.title": "workwood · %s",
   "tui.menu.features": "Super-features",
   "tui.menu.features_desc": "create, edit, and run super-features",
@@ -202,5 +200,10 @@
   "tui.form.branch_placement_desc": "the branch this worktree gets — nested under the super-feature, or standalone",
   "tui.form.placement_nested": "%s   (under the super-feature)",
   "tui.form.placement_standalone": "%s   (standalone branch)",
-  "tui.form.name_ph": "<name>"
+  "tui.form.name_ph": "<name>",
+  "tui.actions.none_found": "no actions found in %s — add a script with a `# workwood-action` marker, then press f to refresh",
+  "tui.actions.selected": "Action:  ▸ %s",
+  "tui.actions.refreshed": "found %d action(s)",
+  "tui.title.choose_action": "Choose an action",
+  "actions.need_chmod": "⚠ %s has the marker but isn't executable — run `chmod +x` on it (then press f to refresh)"
 }

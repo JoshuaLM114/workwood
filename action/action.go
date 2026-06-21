@@ -1,18 +1,27 @@
 // Package action runs an executable action script against a feature's selected
 // targets.
 //
-// An action is just a script (any language) in the super-repo's committed
-// workwood/actions/ folder. workwood is deliberately dumb about meaning: it
-// resolves the feature's enabled targets to a key→absolute-path map, writes that
-// as context.yml, and execs the action with the file's path (WORKWOOD_TARGETS)
-// plus the active super-feature slug (WORKWOOD_FEATURE) in its environment. The
-// action decides what the paths mean (local, deployed, whatever).
+// An action is a script (any language) in the super-repo's committed
+// workwood/actions/ folder that OPTS IN with a marker comment in its first lines:
+//
+//	# workwood-action: deploy to dev      (the text after ':' is an optional label)
+//
+// That marker is how workwood tells an action from a stray helper executable —
+// there's no way to validate a shell script's argument signature, so an explicit
+// opt-in is the safe substitute (it's grepped, never executed).
+//
+// workwood is deliberately dumb about meaning: it resolves the feature's enabled
+// targets to a key→absolute-path map, writes that as context.yml, and execs the
+// action with the file's path BOTH as $1 and as WORKWOOD_TARGETS, plus the active
+// super-feature slug (WORKWOOD_FEATURE). The action decides what the paths mean.
 package action
 
 import (
+	"bufio"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -21,35 +30,89 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Find returns the path of an executable action named name in the project's
-// actions dir, or "" if not found.
+// Action is a discovered action: its filename + the optional marker label.
+type Action struct {
+	Name        string
+	Description string
+}
+
+// markerRe matches the opt-in marker line, capturing an optional description.
+// The \b stops it from matching "workwood-actions" or similar.
+var markerRe = regexp.MustCompile(`^\s*#\s*workwood-action\b\s*:?\s*(.*)$`)
+
+// meta reads a candidate file's first lines and, if it carries the
+// `# workwood-action` marker, returns its description (may be "") and ok=true.
+func meta(path string) (desc string, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for i := 0; i < 30 && sc.Scan(); i++ {
+		if m := markerRe.FindStringSubmatch(sc.Text()); m != nil {
+			return strings.TrimSpace(m[1]), true
+		}
+	}
+	return "", false
+}
+
+// Find returns the path of a valid action named name (executable + marker), or "".
 func Find(cfg *config.Config, name string) string {
 	p := filepath.Join(cfg.ActionsDir, name)
 	if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
-		return p
+		if _, ok := meta(p); ok {
+			return p
+		}
 	}
 	return ""
 }
 
-// List returns the names of executable actions available to a project, sorted.
-func List(cfg *config.Config) []string {
+// Scan inspects the actions dir once and returns the valid actions (marked +
+// executable) plus the names of files that carry the marker but AREN'T executable
+// — a common mistake worth reporting, since workwood execs actions directly.
+func Scan(cfg *config.Config) (actions []Action, needChmod []string) {
 	entries, err := os.ReadDir(cfg.ActionsDir)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	var out []string
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
 		info, err := e.Info()
-		if err != nil || info.Mode()&0o111 == 0 {
+		if err != nil {
 			continue
 		}
-		out = append(out, e.Name())
+		desc, ok := meta(filepath.Join(cfg.ActionsDir, e.Name()))
+		if !ok {
+			continue // not marked → not an action, ignore silently
+		}
+		if info.Mode()&0o111 == 0 {
+			needChmod = append(needChmod, e.Name())
+			continue
+		}
+		actions = append(actions, Action{Name: e.Name(), Description: desc})
 	}
-	sort.Strings(out)
-	return out
+	sort.Slice(actions, func(i, j int) bool { return actions[i].Name < actions[j].Name })
+	sort.Strings(needChmod)
+	return actions, needChmod
+}
+
+// List returns the marked, executable actions available to a project, sorted.
+func List(cfg *config.Config) []Action {
+	actions, _ := Scan(cfg)
+	return actions
+}
+
+// Names returns just the action names (for messages).
+func Names(cfg *config.Config) []string {
+	as := List(cfg)
+	names := make([]string, len(as))
+	for i, a := range as {
+		names[i] = a.Name
+	}
+	return names
 }
 
 // Command writes the resolved targets (key→abs path) to <featureDir>/context.yml
@@ -60,7 +123,7 @@ func List(cfg *config.Config) []string {
 func Command(cfg *config.Config, slug, name string, set, vars map[string]string) (*exec.Cmd, error) {
 	path := Find(cfg, name)
 	if path == "" {
-		avail := List(cfg)
+		avail := Names(cfg)
 		if len(avail) == 0 {
 			return nil, i18n.Err("err.no_action_none", name, cfg.ActionsDir)
 		}
@@ -76,7 +139,9 @@ func Command(cfg *config.Config, slug, name string, set, vars map[string]string)
 		return nil, err
 	}
 
-	cmd := exec.Command(path)
+	// The targets file is passed BOTH as $1 (so an action is literally "a command
+	// that takes the targets as an argument") and as WORKWOOD_TARGETS.
+	cmd := exec.Command(path, ctxPath)
 	cmd.Dir = cfg.Root
 	cmd.Env = append(os.Environ(),
 		"WORKWOOD_TARGETS="+ctxPath,

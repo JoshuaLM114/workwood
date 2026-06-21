@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# workwood-action: greet each selected target
 # DEFAULT workwood ACTION — helloworld. The simplest possible action: it greets
 # each selected target. workwood writes the feature's enabled targets to a YAML
 # file (key: /abs/path) and points WORKWOOD_TARGETS at it; the action just reads

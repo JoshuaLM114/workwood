@@ -143,11 +143,10 @@
   "targets.list_header": "保存済みターゲットプリセット:",
   "targets.show_header": "%s のターゲット:",
   "tui.actions.title": "アクション · %s",
-  "tui.actions.help": "↑/↓ 移動 · space 切替 · enter 展開 · p パス追加 · r 改名 · S 保存 · L 読込 · R 実行 · esc 戻る",
+  "tui.actions.help": "↑/↓ · space 切替 · enter 展開 · p 追加 · r 改名 · S/L プリセット · d アクション · R 実行 · f 更新 · esc 戻る",
   "tui.actions.tree_empty": "ターゲットがありません — workwood.yml に repo を追加するか、この feature に worktree を追加してください",
   "tui.actions.missing": "（不在）",
   "tui.actions.need_key": "git ブランチが見つかりません — このパスのキーを入力してください",
-  "tui.actions.no_actions": "このプロジェクトの workwood/actions/ にアクションがありません",
   "tui.actions.no_presets": "保存済みプリセットがありません",
   "tui.actions.toggle_first": "先にターゲットを有効化（space）してから改名してください",
   "tui.actions.added_path": "%q を追加しました",
@@ -165,7 +164,6 @@
   "tui.title.rename_key": "ターゲットを改名",
   "tui.title.save_preset": "ターゲットプリセットを保存",
   "tui.title.load_preset": "ターゲットプリセットを読み込み",
-  "tui.title.run_action": "アクションを実行",
   "tui.menu.title": "workwood · %s",
   "tui.menu.features": "Super-feature 一覧",
   "tui.menu.features_desc": "super-feature の作成・編集・実行",
@@ -202,5 +200,10 @@
   "tui.form.branch_placement_desc": "この worktree のブランチ — super-feature 配下にネスト、または独立",
   "tui.form.placement_nested": "%s   （super-feature 配下）",
   "tui.form.placement_standalone": "%s   （独立ブランチ）",
-  "tui.form.name_ph": "<name>"
+  "tui.form.name_ph": "<name>",
+  "tui.actions.none_found": "%s にアクションがありません — `# workwood-action` マーカー付きのスクリプトを追加し、f で更新してください",
+  "tui.actions.selected": "アクション:  ▸ %s",
+  "tui.actions.refreshed": "%d 個のアクションが見つかりました",
+  "tui.title.choose_action": "アクションを選択",
+  "actions.need_chmod": "⚠ %s はマーカーがありますが実行可能ではありません — `chmod +x` を実行してください（その後 f で更新）"
 }

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# workwood-action: open a shell in a target
 # DEFAULT workwood ACTION — ssh. Pick one of the feature's selected targets and
 # drop into a shell there. Replace the final shell with your real connect command
 # (ssh, kubectl exec, port-forward) keyed off the target's path or a file in it —

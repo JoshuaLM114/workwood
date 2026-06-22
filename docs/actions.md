@@ -1,0 +1,79 @@
+# Actions
+
+An action is a **bash script** in the super-repo's `workwood/actions/` folder that
+workwood **sources** and calls into. workwood is dumb about meaning — it hands the
+action the selected target paths and gets out of the way.
+
+## The contract (required)
+
+An action script must:
+
+1. carry the marker comment `# workwood-action: <optional label>`,
+2. be **executable** (`chmod +x`),
+3. define two bash functions — **`Run`** and **`Validate`** — and **no top-level
+   work** (workwood `source`s the file and calls one function).
+
+```bash
+#!/usr/bin/env bash
+# workwood-action: print each target's hello file
+set -euo pipefail
+
+# Validate: return non-zero if this action can't act on the target(s) in context.
+Validate() {
+  while IFS= read -r line; do
+    key=${line%%:*}; path=${line#*: }
+    [ -n "$key" ] && [ "$key" != "$line" ] || continue
+    [ -f "$path/.workwood/hello-world.txt" ] || return 1
+  done < "${WORKWOOD_TARGETS:?}"
+}
+
+# Run: do the thing.
+Run() {
+  while IFS= read -r line; do
+    key=${line%%:*}; path=${line#*: }
+    [ -n "$key" ] && [ "$key" != "$line" ] || continue
+    cat "$path/.workwood/hello-world.txt"
+  done < "$WORKWOOD_TARGETS"
+}
+```
+
+A script missing `Run` or `Validate` is shown but **cannot be run** (TUI or CLI).
+
+## Environment workwood provides
+
+- `WORKWOOD_TARGETS` — path to a `context.yml`: a YAML `key: /abs/path` map of the
+  enabled targets. Parse it with the tiny `key/path` loop above (no `yq`/`jq`).
+- `WORKWOOD_FEATURE` — the active super-feature slug.
+- `WORKWOOD_ACTION` — this action's name. `WORKWOOD_LANG` — UI language.
+- `WORKWOOD_VAR_<KEY>` — each `vars:` entry from the manifest, upper-cased.
+
+Interactive actions are fine — `Run` may `exec tmux`/a shell; the TUI releases the
+terminal and resumes when you exit. (See the bundled `tmux`, `ssh`, `helloworld`,
+`hello-world` examples in `example/workwood/actions/`.)
+
+## Running
+
+```sh
+workwood actions                         # list discovered actions (+ availability)
+workwood action <name> [feature]         # run against the feature's working set
+workwood action <name> [feature] --targets <preset|file.yml>   # override the set
+```
+
+`[feature]` defaults to the feature you're standing in (`docs/super-features.md`).
+
+## Validation (`Validate`)
+
+`Validate`'s exit code says whether the action can act on a target — its body is
+yours (e.g. "the target has the child script it needs"). In the **TUI Actions
+screen**:
+
+- validation runs **on entry**, on **`V`**, and when you switch action (`d`);
+- it runs `Validate` **once per available target** (each target as the sole
+  context) and marks each **✓ / ✗** in the tree;
+- an **enabled** target's text is green (passed) / red (failed), and **`R` (run) is
+  blocked while any enabled target is failing**;
+- the picker greys out actions missing `Run`/`Validate`.
+
+Keep `Validate` fast — it runs once per target, synchronously.
+
+→ Targets/presets that feed an action: `docs/targets.md`.

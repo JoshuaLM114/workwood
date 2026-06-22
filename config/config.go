@@ -55,6 +55,10 @@ const (
 	// regenerable file): bump it when the link layout changes, and EnsureFeatureLink
 	// rewrites any out-of-date link the next time the feature is used or relinked.
 	FeatureLinkVersion = 1
+
+	// ActionDataDirName is the folder (inside a feature's .workwood/) under which
+	// each action gets its own private state directory.
+	ActionDataDirName = "action-data"
 )
 
 // EnvHome and EnvData are the env overrides for the two non-committed locations.
@@ -134,6 +138,14 @@ type FeatureLink struct {
 // FeatureLinkPath is the link file's path for a feature slug.
 func (c *Config) FeatureLinkPath(slug string) string {
 	return filepath.Join(c.FeatureDir(slug), RepoWorkwoodDirName, FeatureLinkName)
+}
+
+// ActionDataDir is the private state directory workwood hands an action for a
+// feature: <FeatureDir>/.workwood/action-data/<action>/. workwood creates the
+// (empty) dir and passes its path via WORKWOOD_ACTION_DATA, but never reads or
+// writes anything inside — the action owns its own state files.
+func (c *Config) ActionDataDir(slug, action string) string {
+	return filepath.Join(c.FeatureDir(slug), RepoWorkwoodDirName, ActionDataDirName, action)
 }
 
 // WriteFeatureLink writes (or refreshes) the back-link in a feature folder,

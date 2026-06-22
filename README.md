@@ -309,7 +309,8 @@ and also execs the action with:
 
 | Env | Meaning |
 | --- | --- |
-| `WORKWOOD_TARGETS` | path to `context.yml` (same as `$1`), a `key: /abs/path` map of the enabled targets |
+| `WORKWOOD_TARGETS` | path to `context.yml`, a `key: /abs/path` map of the enabled targets |
+| `WORKWOOD_ACTION_DATA` | a private per-feature state dir for this action (`…/<feature>/.workwood/action-data/<action>/`); workwood creates it empty and never touches the contents — the action owns its state files |
 | `WORKWOOD_FEATURE` | the active super-feature slug |
 | `WORKWOOD_ACTION` | the action's name |
 | `WORKWOOD_LANG` | the active UI language (`en`/`ja`) — localize your own output if you like |

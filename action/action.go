@@ -157,12 +157,20 @@ func invoke(cfg *config.Config, slug, name, fn string, set, vars map[string]stri
 		return nil, err
 	}
 
+	// A private state dir the action owns (workwood creates it but writes nothing
+	// inside): the action persists/sources its own state there across runs.
+	actionData := cfg.ActionDataDir(slug, name)
+	if err := os.MkdirAll(actionData, 0o755); err != nil {
+		return nil, err
+	}
+
 	// Source the action and call the requested function. The script's path is $1
 	// to the -c program; the function reads the targets via WORKWOOD_TARGETS.
 	cmd := exec.Command("bash", "-c", `source "$1"; `+fn, "workwood-action", path)
 	cmd.Dir = cfg.Root
 	cmd.Env = append(os.Environ(),
 		"WORKWOOD_TARGETS="+ctxPath,
+		"WORKWOOD_ACTION_DATA="+actionData,
 		"WORKWOOD_FEATURE="+slug,
 		"WORKWOOD_ACTION="+name,
 		"WORKWOOD_LANG="+i18n.Lang(),

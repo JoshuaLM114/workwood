@@ -28,7 +28,8 @@ Mental model (memorize this):
   this feature's worktrees, + monorepo services). The *enabled* subset is what an
   action acts on. Reusable named **presets** live at `$WORKWOOD_DATA/targets/`.
 - **action** — a bash script in `workwood/actions/` defining `Run` + `Validate`
-  functions, run against the working set.
+  functions, run against the working set. It gets a private per-feature state dir
+  via `WORKWOOD_ACTION_DATA` (workwood creates it but never touches its contents).
 - **`$WORKWOOD_DATA`** — the per-project data dir (clones, worktrees, state,
   presets). **Never committed**; set per project via the env var.
 

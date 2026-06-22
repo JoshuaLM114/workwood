@@ -46,6 +46,20 @@ func TestCommandContextAndEnv(t *testing.T) {
 	if !strings.Contains(env, "WORKWOOD_TARGETS="+filepath.Join(dir, "login", "context.yml")) {
 		t.Errorf("WORKWOOD_TARGETS not set to context.yml path")
 	}
+
+	// The per-action state dir is exported and created EMPTY — workwood hands the
+	// action a place to write but never writes anything inside it.
+	dataDir := cfg.ActionDataDir("login", "noop")
+	if !strings.Contains(env, "WORKWOOD_ACTION_DATA="+dataDir) {
+		t.Errorf("WORKWOOD_ACTION_DATA not set to the action data dir")
+	}
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		t.Fatalf("action data dir should exist: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("workwood must not write into the action data dir, found %d entries", len(entries))
+	}
 	for _, gone := range []string{"WORKWOOD_PLUGIN", "WORKWOOD_MODE", "WORKWOOD_CONTEXT", "WORKWOOD_SESSION"} {
 		if strings.Contains(env, gone+"=") {
 			t.Errorf("env should not contain dropped var %q", gone)

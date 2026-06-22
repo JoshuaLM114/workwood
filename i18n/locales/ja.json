@@ -58,7 +58,7 @@
   "log.removed": "削除: %s",
   "log.added": "追加: %s @ %s -> %s",
   "usage.main": "workwood — マルチ repo の super-feature 向け git-worktree オーケストレーション\n\n使い方:\n  workwood                                 インタラクティブな super-feature エディタ（TUI）を起動\n  workwood init [path]                     この super-repo を生成/同期（冪等）\n  workwood project [info|rename <name>]    現在のプロジェクトを表示/改名（ローカルラベル）\n  workwood repos  [pull|list]              main_dir 内のベースクローンを管理\n  workwood super-feature <subcommand>      super-feature を管理（別名: sf; 参照: workwood sf help）\n  workwood action <name> <feature> [--targets <preset>]  選択したターゲットに対してアクションを実行\n  workwood actions                         利用可能なアクションを一覧表示\n  workwood targets [list|show <feature>]   保存済みプリセットを一覧 / feature のターゲットを表示\n  workwood lang [en|ja]                    UI 言語を表示または設定\n  workwood version                         ビルド + ファイルスキーマのバージョンを表示\n\nグローバル:\n  -p, --project <path>                     <path> の super-repo を対象にする（省略時: cwd から上方向に検索）\n",
-  "usage.feature": "使い方: workwood super-feature <command> [args]   (別名: sf)\n\nコマンド:\n  create <name> [description]                     super-feature マニフェストを作成\n  rename <slug> <new-name>                        このユーザーのローカル表示名を設定（slug は固定）\n  add    <name> <repo> <worktree-branch-name> [--from <source>] [--no-feature-prefix]\n                                                  ブランチ <name>/<worktree-branch-name> で worktree を追加（<repo> から）\n  up     <name>                                   マニフェストから全 worktree を再構築\n  remove <name> <repo> [sub-branch] [--prune-branch]\n                                                  worktree を1つ削除（+ 任意でそのブランチも）\n  down   <name>                                   全 worktree を削除、マニフェストは保持\n  status <name>                                   worktree ごとのブランチ + 変更状態\n  list                                            全 super-feature を一覧表示\n  delete <name> [--prune-branches]                worktree + マニフェスト（+ ブランチ）を削除\n",
+  "usage.feature": "使い方: workwood super-feature <command> [args]   (別名: sf)\n\nコマンド:\n  create <name> [description]                     super-feature マニフェストを作成\n  rename <slug> <new-name>                        このユーザーのローカル表示名を設定（slug は固定）\n  add    <name> <repo> <worktree-branch-name> [--from <source>] [--no-feature-prefix]\n                                                  ブランチ <name>/<worktree-branch-name> で worktree を追加（<repo> から）\n  up     <name>                                   マニフェストから全 worktree を再構築\n  remove <name> <repo> [sub-branch] [--prune-branch]\n                                                  worktree を1つ削除（+ 任意でそのブランチも）\n  down   <name>                                   全 worktree を削除、マニフェストは保持\n  status <name>                                   worktree ごとのブランチ + 変更状態\n  list                                            全 super-feature を一覧表示\n  delete <name> [--prune-branches]                worktree + マニフェスト（+ ブランチ）を削除\n  relink [feature]                                フィーチャーフォルダのバックリンクを検証し、欠落/古い場合は再生成\n",
   "tui.error": "エラー: %s",
   "tui.press_q": "q で終了",
   "tui.new_feature": "新しい super-feature",
@@ -143,7 +143,7 @@
   "targets.list_header": "保存済みターゲットプリセット:",
   "targets.show_header": "%s のターゲット:",
   "tui.actions.title": "アクション · %s",
-  "tui.actions.help": "↑/↓ · space 切替 · enter 展開 · p 追加 · r 改名 · S/L プリセット · d アクション · R 実行 · f 更新 · esc 戻る",
+  "tui.actions.help": "↑/↓ · space 切替 · enter 展開 · p 追加 · r 改名 · g 再生成 · S/L プリセット · d アクション · R 実行 · f 更新 · esc 戻る",
   "tui.actions.tree_empty": "ターゲットがありません — workwood.yml に repo を追加するか、この feature に worktree を追加してください",
   "tui.actions.missing": "（不在）",
   "tui.actions.need_key": "git ブランチが見つかりません — このパスのキーを入力してください",
@@ -225,5 +225,14 @@
   "tui.menu.out_of_sync": "⚠ origin より遅れ: %s — Edit project を開き p で取得+プル（任意）",
   "tui.repos.br_local": "ローカル",
   "tui.repos.br_remote": "リモート",
-  "tui.repos.fetching_branches": "%s のブランチを取得中…"
+  "tui.repos.fetching_branches": "%s のブランチを取得中…",
+  "err.stale_link": "フィーチャーリンク %s が %s を指していますが、そこに workwood.yml がありません — super-repo で `workwood sf up` を実行して更新してください",
+  "targets.generated": "ターゲットプリセット %q を %s に生成しました",
+  "err.usage_targets_generate": "使い方: workwood targets generate <feature>（またはフィーチャーフォルダ内で実行）",
+  "tui.actions.overwrite_confirm": "プリセット %q は存在します — 上書きしますか?",
+  "tui.actions.regenerated": "現在のリポジトリ + ワークツリーからプリセット %q を再生成しました",
+  "feature.relinked": "%s を再リンクしました — %s を書き込みました",
+  "feature.relink_ok": "%s — リンク OK",
+  "tui.menu.links_broken": "⚠ 修復が必要なフィーチャーリンク: %s — r で修正",
+  "tui.menu.links_fixed": "✓ %d 件のフィーチャーリンクを修復しました"
 }

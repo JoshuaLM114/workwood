@@ -8,6 +8,7 @@ package tui
 
 import (
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/JoshuaLM114/workwood/config"
@@ -95,26 +96,67 @@ type Model struct {
 
 	width, height int
 	err           error
-	syncWarning   string // set on boot when ref repos are behind origin
+	syncWarning   string   // set on boot when ref repos are behind origin
+	linkNotice    string   // set on boot when feature back-links need repair (or after a fix)
+	brokenLinks   []string // feature slugs whose .workwood/link.yml is missing/stale
+	actionsToMenu bool     // launched into Actions from a feature folder → esc goes to the menu
 }
 
-// bootSyncMsg carries the names of ref repos found behind origin after the
-// on-boot fetch.
-type bootSyncMsg struct{ outOfSync []string }
+// bootSyncMsg carries the on-boot health check: ref repos behind origin, and
+// feature folders whose back-link needs repair.
+type bootSyncMsg struct {
+	outOfSync   []string
+	brokenLinks []string
+}
 
-// bootFetchCmd fetches the ref repos in the background on launch (read-only — it
-// never pulls or touches the working tree), then reports any that are behind.
+// bootFetchCmd runs the on-boot health check in the background: a read-only fetch
+// of the ref repos (never pulls), plus a (local, instant) scan for feature folders
+// whose back-link is missing or stale.
 func (m *Model) bootFetchCmd() tea.Cmd {
 	cfg, pd := m.cfg, m.pd
 	return func() tea.Msg {
 		repos.FetchAll(cfg, pd)
-		return bootSyncMsg{outOfSync: repos.OutOfSync(cfg, pd)}
+		return bootSyncMsg{outOfSync: repos.OutOfSync(cfg, pd), brokenLinks: brokenFeatureLinks(cfg)}
 	}
 }
 
-// Run starts the TUI for an already-resolved project at the root menu.
+// brokenFeatureLinks returns the slugs of built features (those with a folder on
+// disk) whose .workwood/link.yml is missing, an old version, or inconsistent.
+func brokenFeatureLinks(cfg *config.Config) []string {
+	st, err := config.LoadState(cfg.StateFile)
+	if err != nil {
+		return nil
+	}
+	slugs := make([]string, 0, len(st.Features))
+	for _, fs := range st.Features {
+		slugs = append(slugs, fs.Slug)
+	}
+	sort.Strings(slugs)
+	var broken []string
+	for _, s := range slugs {
+		if _, err := os.Stat(cfg.FeatureDir(s)); err != nil {
+			continue // not built yet → nothing to validate
+		}
+		if !config.FeatureLinkValid(cfg, s) {
+			broken = append(broken, s)
+		}
+	}
+	return broken
+}
+
+// Run starts the TUI for an already-resolved project. Normally it opens at the
+// root menu; when launched from inside a feature folder (cfg.ActiveFeature set) it
+// jumps straight to that feature's Actions panel, with esc wired back to the menu
+// so the parent yamls (repos, manifests, settings) stay reachable.
 func Run(cfg *config.Config, pd *projectdef.File) error {
 	m := &Model{cfg: cfg, pd: pd, screen: screenMenu}
+	if cfg.ActiveFeature != "" {
+		if am, err := newActionsModel(m, cfg.ActiveFeature); err == nil {
+			m.actions = am
+			m.screen = screenActions
+			m.actionsToMenu = true
+		}
+	}
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
@@ -143,6 +185,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case bootSyncMsg:
 		if len(msg.outOfSync) > 0 {
 			m.syncWarning = i18n.T("tui.menu.out_of_sync", strings.Join(msg.outOfSync, ", "))
+		}
+		m.brokenLinks = msg.brokenLinks
+		if len(msg.brokenLinks) > 0 {
+			m.linkNotice = warnStyle.Render(i18n.T("tui.menu.links_broken", strings.Join(msg.brokenLinks, ", ")))
 		}
 		return m, nil
 
@@ -220,7 +266,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.screen {
 		case screenActions:
 			m.actions = nil
-			m.screen = screenEditor
+			if m.actionsToMenu {
+				m.actionsToMenu = false
+				m.screen = screenMenu // launched from a feature folder → full menu
+			} else {
+				m.screen = screenEditor
+			}
 		case screenEditor:
 			m.editor = nil
 			m.features = newFeaturesModel(m)

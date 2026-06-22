@@ -192,13 +192,17 @@ type nameVals struct {
 	name string
 }
 
-// newSavePresetForm builds the "save target preset" form.
-func newSavePresetForm(v *nameVals) *huh.Form {
+// newSavePresetForm builds the "save target preset" form. v.name is pre-filled
+// (with the last-loaded preset); existing preset names are offered as suggestions
+// so you can pick one to overwrite or type a new one. Overwrite is confirmed
+// separately (see the actions screen's save flow).
+func newSavePresetForm(existing []string, v *nameVals) *huh.Form {
 	return form(
 		huh.NewGroup(
 			huh.NewInput().
 				Key("name").
 				Title(i18n.T("tui.form.preset_name")).
+				Suggestions(existing).
 				Value(&v.name).
 				Validate(func(s string) error {
 					s = strings.TrimSpace(s)
@@ -210,6 +214,23 @@ func newSavePresetForm(v *nameVals) *huh.Form {
 					}
 					return nil
 				}),
+		),
+	)
+}
+
+// confirmVals binds a yes/no confirm form.
+type confirmVals struct {
+	ok bool
+}
+
+// newConfirmForm builds a single yes/no confirmation.
+func newConfirmForm(title string, v *confirmVals) *huh.Form {
+	return form(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Key("ok").
+				Title(title).
+				Value(&v.ok),
 		),
 	)
 }

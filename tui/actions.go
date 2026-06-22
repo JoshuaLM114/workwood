@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/JoshuaLM114/workwood/action"
+	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/manifest"
 	"github.com/JoshuaLM114/workwood/targetcfg"
@@ -21,6 +22,7 @@ const (
 	afAddPath
 	afRenameKey
 	afSavePreset
+	afConfirmOverwrite
 	afLoadPreset
 	afChooseAction
 )
@@ -44,13 +46,15 @@ type actionsModel struct {
 	needChmod []string        // marked files that aren't executable (common mistake)
 	selected  string          // the chosen action's name (the top "dropdown")
 
-	form       *huh.Form
-	formMode   actionsFormMode
-	pathVals   pathVals
-	keyVals    keyVals
-	nameVals   nameVals
-	selVals    selectVals
-	lastAction string
+	form          *huh.Form
+	formMode      actionsFormMode
+	pathVals      pathVals
+	keyVals       keyVals
+	nameVals      nameVals
+	confirmVals   confirmVals
+	pendingPreset string // preset name awaiting an overwrite confirm
+	selVals       selectVals
+	lastAction    string
 
 	status string
 	width  int
@@ -201,10 +205,12 @@ func (a *actionsModel) Update(msg tea.Msg) (*actionsModel, tea.Cmd) {
 			}
 			a.status = i18n.T("tui.actions.toggle_first")
 		case "S":
-			a.nameVals = nameVals{}
-			a.form = newSavePresetForm(&a.nameVals).WithWidth(min(72, a.width-4))
+			a.nameVals = nameVals{name: a.lastPreset()} // jump to the last-loaded preset
+			a.form = newSavePresetForm(targetcfg.ListPresets(a.m.cfg), &a.nameVals).WithWidth(min(72, a.width-4))
 			a.formMode = afSavePreset
 			return a, a.form.Init()
+		case "g":
+			a.regeneratePreset()
 		case "L":
 			presets := targetcfg.ListPresets(a.m.cfg)
 			if len(presets) == 0 {
@@ -280,7 +286,26 @@ func (a *actionsModel) onFormDone() tea.Cmd {
 	case afRenameKey:
 		a.renameKey()
 	case afSavePreset:
-		a.savePreset()
+		name := strings.TrimSpace(a.nameVals.name)
+		if name == "" {
+			return nil
+		}
+		// Overwriting an existing preset asks first; a new name saves straight away.
+		if targetcfg.PresetExists(a.m.cfg, name) {
+			a.pendingPreset = name
+			a.confirmVals = confirmVals{}
+			a.form = newConfirmForm(i18n.T("tui.actions.overwrite_confirm", name), &a.confirmVals).WithWidth(min(72, a.width-4))
+			a.formMode = afConfirmOverwrite
+			return a.form.Init()
+		}
+		a.savePreset(name)
+	case afConfirmOverwrite:
+		if a.confirmVals.ok {
+			a.savePreset(a.pendingPreset)
+		} else {
+			a.status = i18n.T("tui.status.cancelled")
+		}
+		a.pendingPreset = ""
 	case afLoadPreset:
 		a.loadPreset(a.selVals.choice)
 	case afChooseAction:
@@ -323,15 +348,12 @@ func (a *actionsModel) renameKey() {
 	a.status = okStyle.Render(i18n.T("tui.actions.renamed", newKey))
 }
 
-func (a *actionsModel) savePreset() {
-	name := strings.TrimSpace(a.nameVals.name)
-	if name == "" {
-		return
-	}
+func (a *actionsModel) savePreset(name string) {
 	if err := targetcfg.SavePreset(a.m.cfg, name, a.working); err != nil {
 		a.status = errStyle.Render(i18n.T("tui.actions.run_failed", err.Error()))
 		return
 	}
+	a.recordLastPreset(name)
 	a.status = okStyle.Render(i18n.T("tui.actions.saved_preset", name))
 }
 
@@ -343,8 +365,39 @@ func (a *actionsModel) loadPreset(name string) {
 	}
 	a.working = set
 	a.save()
+	a.recordLastPreset(name)
 	a.rebuild()
 	a.status = okStyle.Render(i18n.T("tui.actions.loaded_preset", name))
+}
+
+// regeneratePreset rewrites <feature>.yml from a fresh CleanSet (repos + current
+// worktrees), overwriting it — the explicit "pick up new worktrees" action.
+func (a *actionsModel) regeneratePreset() {
+	if err := targetcfg.SavePreset(a.m.cfg, a.slug, targetcfg.CleanSet(a.m.cfg, a.m.pd, a.man)); err != nil {
+		a.status = errStyle.Render(i18n.T("tui.actions.run_failed", err.Error()))
+		return
+	}
+	a.recordLastPreset(a.slug)
+	a.status = okStyle.Render(i18n.T("tui.actions.regenerated", a.slug))
+}
+
+// lastPreset is the preset name last loaded/saved for this feature (UI memory).
+func (a *actionsModel) lastPreset() string {
+	st, err := config.LoadState(a.m.cfg.StateFile)
+	if err != nil {
+		return ""
+	}
+	return st.LastPreset(a.man.ID)
+}
+
+// recordLastPreset persists the last loaded/saved preset name for this feature.
+func (a *actionsModel) recordLastPreset(name string) {
+	st, err := config.LoadState(a.m.cfg.StateFile)
+	if err != nil {
+		return
+	}
+	st.SetLastPreset(a.man.ID, name)
+	_ = config.SaveState(a.m.cfg.StateFile, st)
 }
 
 func (a *actionsModel) runAction(name string) tea.Cmd {
@@ -433,6 +486,8 @@ func (a *actionsModel) formTitle() string {
 	case afRenameKey:
 		return i18n.T("tui.title.rename_key")
 	case afSavePreset:
+		return i18n.T("tui.title.save_preset")
+	case afConfirmOverwrite:
 		return i18n.T("tui.title.save_preset")
 	case afLoadPreset:
 		return i18n.T("tui.title.load_preset")

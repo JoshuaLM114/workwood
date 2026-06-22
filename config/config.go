@@ -41,8 +41,20 @@ const (
 	AppFileName      = "config.yaml"        // ~/.workwood/config.yaml (app settings)
 
 	// RepoWorkwoodDirName is the per-repo folder (in a base clone or worktree) that
-	// may hold a targets.yml describing a multi-service repo's sub-paths.
+	// may hold a targets.yml describing a multi-service repo's sub-paths. The same
+	// folder name inside a FEATURE dir holds the back-link file (FeatureLinkName).
 	RepoWorkwoodDirName = ".workwood"
+
+	// FeatureLinkName is the back-link file workwood drops in a feature folder
+	// (<FeaturesDir>/<slug>/.workwood/link.yml) so the tool can be run from there
+	// and resolve back to the parent super-repo.
+	FeatureLinkName = "link.yml"
+
+	// FeatureLinkVersion is the back-link file's own format version. It evolves
+	// independently of the committed-file version.Schema (the link is a local,
+	// regenerable file): bump it when the link layout changes, and EnsureFeatureLink
+	// rewrites any out-of-date link the next time the feature is used or relinked.
+	FeatureLinkVersion = 1
 )
 
 // EnvHome and EnvData are the env overrides for the two non-committed locations.
@@ -80,6 +92,10 @@ type Config struct {
 	StateFile    string // <StateDir>/workwood-state.yml
 	MainDir      string // base reference clones (state override, else <StateDir>/main)
 	FeaturesDir  string // feature worktrees (state override, else <StateDir>/features)
+
+	// ActiveFeature is the feature slug implied by where the command ran: set when
+	// the project was resolved via a feature folder's .workwood/link.yml, else "".
+	ActiveFeature string
 }
 
 // ---- locate errors --------------------------------------------------------
@@ -94,6 +110,85 @@ func (e *NotInProjectError) Error() string { return i18n.T("err.not_in_project",
 type NoIdentityError struct{ Root string }
 
 func (e *NoIdentityError) Error() string { return i18n.T("err.no_identity", e.Root) }
+
+// StaleLinkError means a feature folder's link.yml points at a super-repo path
+// that no longer holds a workwood.yml (the checkout moved). Re-running `sf up`
+// from the super-repo rewrites the link.
+type StaleLinkError struct{ Link, SuperRepo string }
+
+func (e *StaleLinkError) Error() string { return i18n.T("err.stale_link", e.Link, e.SuperRepo) }
+
+// ---- feature back-link -----------------------------------------------------
+
+// FeatureLink is the <FeaturesDir>/<slug>/.workwood/link.yml back-link: it records
+// (this developer's) super-repo path + data dir so the tool can run from a feature
+// folder with neither the super-repo as cwd nor $WORKWOOD_DATA set.
+type FeatureLink struct {
+	Version   int    `yaml:"version"`    // FeatureLinkVersion it was written with
+	SuperRepo string `yaml:"super_repo"` // checkout holding workwood.yml
+	DataDir   string `yaml:"data_dir"`   // $WORKWOOD_DATA for this project
+	Project   string `yaml:"project"`    // project UUID (integrity)
+	Feature   string `yaml:"feature"`    // the feature slug
+}
+
+// FeatureLinkPath is the link file's path for a feature slug.
+func (c *Config) FeatureLinkPath(slug string) string {
+	return filepath.Join(c.FeatureDir(slug), RepoWorkwoodDirName, FeatureLinkName)
+}
+
+// WriteFeatureLink writes (or refreshes) the back-link in a feature folder,
+// (re)creating the .workwood folder and stamping the current link version.
+func WriteFeatureLink(c *Config, slug string) error {
+	link := FeatureLink{
+		Version:   FeatureLinkVersion,
+		SuperRepo: c.Root, DataDir: c.DataDir, Project: c.ProjectID, Feature: slug,
+	}
+	data, err := yaml.Marshal(link)
+	if err != nil {
+		return err
+	}
+	path := c.FeatureLinkPath(slug)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+// ReadFeatureLink parses a feature folder's link.yml.
+func ReadFeatureLink(path string) (*FeatureLink, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var l FeatureLink
+	if err := yaml.Unmarshal(data, &l); err != nil {
+		return nil, i18n.Errw(err, "err.parse_file", path)
+	}
+	return &l, nil
+}
+
+// FeatureLinkValid reports whether a feature's back-link is present, the current
+// version, and consistent with this config (super-repo, data dir, project). It
+// never writes — use EnsureFeatureLink to repair.
+func FeatureLinkValid(c *Config, slug string) bool {
+	l, err := ReadFeatureLink(c.FeatureLinkPath(slug))
+	if err != nil {
+		return false
+	}
+	return version.Normalize(l.Version) == FeatureLinkVersion &&
+		l.SuperRepo == c.Root && l.DataDir == c.DataDir &&
+		l.Project == c.ProjectID && l.Feature == slug
+}
+
+// EnsureFeatureLink (re)writes the back-link only when it's missing, an old
+// version, or inconsistent with this config. Returns whether it (re)wrote — so a
+// fast "already fine" path stays write-free.
+func EnsureFeatureLink(c *Config, slug string) (regenerated bool, err error) {
+	if FeatureLinkValid(c, slug) {
+		return false, nil
+	}
+	return true, WriteFeatureLink(c, slug)
+}
 
 // ---- home + app settings --------------------------------------------------
 
@@ -154,46 +249,75 @@ func SaveApp(home string, app *AppSettings) error {
 
 // ---- project location + build ---------------------------------------------
 
-// LocateProject finds the super-repo: it walks up from projectFlag (if given)
-// else the cwd to a workwood.yml, loads it, and requires a UUID. Returns a
-// *NotInProjectError or *NoIdentityError when those preconditions aren't met.
-func LocateProject(projectFlag string) (root string, pd *projectdef.File, err error) {
+// Location is a resolved project: its super-repo root + parsed def, plus (when the
+// command ran inside a feature folder) the data dir and active feature the
+// back-link supplied.
+type Location struct {
+	Root          string
+	PD            *projectdef.File
+	DataDir       string // from a feature link; "" when resolved via workwood.yml
+	ActiveFeature string // feature slug from a feature link; "" otherwise
+}
+
+// LocateProject finds the project by walking up from projectFlag (if given) else
+// the cwd. At each level it accepts EITHER a workwood.yml (the super-repo root) OR
+// a feature folder's .workwood/link.yml (which points back to the super-repo and
+// names the active feature) — deepest match wins, so a feature folder resolves to
+// its parent. Returns *NotInProjectError / *NoIdentityError / *StaleLinkError when
+// preconditions aren't met.
+func LocateProject(projectFlag string) (*Location, error) {
 	start := projectFlag
 	if start == "" {
 		cwd, e := os.Getwd()
 		if e != nil {
-			return "", nil, e
+			return nil, e
 		}
 		start = cwd
 	}
 	abs, e := filepath.Abs(start)
 	if e != nil {
-		return "", nil, e
+		return nil, e
 	}
-	root = findProjectRoot(abs)
-	if root == "" {
-		return "", nil, &NotInProjectError{Start: abs}
-	}
-	pd, err = projectdef.Load(filepath.Join(root, ProjectDefName))
+	root, dataDir, feature, err := findProject(abs)
 	if err != nil {
-		return "", nil, err
+		return nil, err
+	}
+	if root == "" {
+		return nil, &NotInProjectError{Start: abs}
+	}
+	pd, err := projectdef.Load(filepath.Join(root, ProjectDefName))
+	if err != nil {
+		return nil, err
 	}
 	if !pd.HasIdentity() {
-		return "", nil, &NoIdentityError{Root: root}
+		return nil, &NoIdentityError{Root: root}
 	}
-	return root, pd, nil
+	return &Location{Root: root, PD: pd, DataDir: dataDir, ActiveFeature: feature}, nil
 }
 
-// findProjectRoot walks up from dir looking for ProjectDefName, returning the
-// containing dir or "" if none is found before the filesystem root.
-func findProjectRoot(dir string) string {
+// findProject walks up from dir. It returns the super-repo root for the first
+// ancestor that holds a workwood.yml, or — if a feature folder's link.yml is hit
+// first — the super-repo + data dir + feature it points to. Returns "" root when
+// nothing is found before the filesystem root.
+func findProject(dir string) (root, dataDir, feature string, err error) {
 	for {
-		if _, err := os.Stat(filepath.Join(dir, ProjectDefName)); err == nil {
-			return dir
+		if _, e := os.Stat(filepath.Join(dir, ProjectDefName)); e == nil {
+			return dir, "", "", nil
+		}
+		linkPath := filepath.Join(dir, RepoWorkwoodDirName, FeatureLinkName)
+		if _, e := os.Stat(linkPath); e == nil {
+			link, e := ReadFeatureLink(linkPath)
+			if e != nil {
+				return "", "", "", e
+			}
+			if _, e := os.Stat(filepath.Join(link.SuperRepo, ProjectDefName)); e != nil {
+				return "", "", "", &StaleLinkError{Link: linkPath, SuperRepo: link.SuperRepo}
+			}
+			return link.SuperRepo, link.DataDir, link.Feature, nil
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return ""
+			return "", "", "", nil
 		}
 		dir = parent
 	}
@@ -250,13 +374,22 @@ func Build(root string, pd *projectdef.File, dataDir string) (*Config, error) {
 }
 
 // Resolve is LocateProject + Build in one step (data dir already resolved). The
-// interactive data-dir prompt lives in the CLI, so this stays prompt-free.
+// interactive data-dir prompt lives in the CLI, so this stays prompt-free. When a
+// feature link supplied its own data dir, that wins over the passed-in one.
 func Resolve(projectFlag, dataDir string) (*Config, error) {
-	root, pd, err := LocateProject(projectFlag)
+	loc, err := LocateProject(projectFlag)
 	if err != nil {
 		return nil, err
 	}
-	return Build(root, pd, dataDir)
+	if loc.DataDir != "" {
+		dataDir = loc.DataDir
+	}
+	cfg, err := Build(loc.Root, loc.PD, dataDir)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ActiveFeature = loc.ActiveFeature
+	return cfg, nil
 }
 
 // ---- path helpers ---------------------------------------------------------

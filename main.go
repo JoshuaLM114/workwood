@@ -125,16 +125,24 @@ func extractProjectFlag(args []string) (string, []string) {
 // loadProject locates the super-repo (cwd walk-up or -p path), resolves the data
 // dir, and builds the Config + loads its project definition.
 func loadProject(projectFlag string) (*config.Config, *projectdef.File, error) {
-	root, pd, err := config.LocateProject(projectFlag)
+	loc, err := config.LocateProject(projectFlag)
 	if err != nil {
 		return nil, nil, err
 	}
-	dataDir, err := ensureDataDir()
+	// A feature link carries its own data dir, so running from a feature folder
+	// works with neither the super-repo as cwd nor $WORKWOOD_DATA set.
+	dataDir := loc.DataDir
+	if dataDir == "" {
+		if dataDir, err = ensureDataDir(); err != nil {
+			return nil, nil, err
+		}
+	}
+	cfg, err := config.Build(loc.Root, loc.PD, dataDir)
 	if err != nil {
 		return nil, nil, err
 	}
-	cfg, err := config.Build(root, pd, dataDir)
-	return cfg, pd, err
+	cfg.ActiveFeature = loc.ActiveFeature
+	return cfg, loc.PD, nil
 }
 
 // resolveCfg is loadProject when only the Config is needed.
@@ -287,6 +295,18 @@ func runInit(args []string) error {
 	}
 	if err := config.SaveState(stateFile, st); err != nil {
 		return err
+	}
+
+	// Backfill the feature back-link for any feature already built on disk, so
+	// existing checkouts gain "run from the feature folder" without a rebuild.
+	if cfg, err := config.Build(root, pd, dataDir); err == nil {
+		for _, m := range mans {
+			if _, e := os.Stat(cfg.FeatureDir(m.Feature)); e == nil {
+				if e := config.WriteFeatureLink(cfg, m.Feature); e != nil {
+					return e
+				}
+			}
+		}
 	}
 
 	if err := ensureDataDirIgnored(root, dataDir); err != nil {
@@ -456,14 +476,22 @@ func runRepos(projectFlag string, args []string) error {
 // loads the named preset (or a literal YAML file path).
 func runAction(projectFlag string, args []string) error {
 	pos, flags := splitFlags(args)
-	if len(pos) < 2 {
+	if len(pos) < 1 {
 		return i18n.Err("err.usage_action")
 	}
 	cfg, err := resolveCfg(projectFlag)
 	if err != nil {
 		return err
 	}
-	name, feature := pos[0], pos[1]
+	name := pos[0]
+	explicit := ""
+	if len(pos) >= 2 {
+		explicit = pos[1]
+	}
+	feature, err := featureArg(cfg, explicit, "err.usage_action")
+	if err != nil {
+		return err
+	}
 
 	var override targetcfg.Set
 	if tf := flags["targets"]; tf != "" {
@@ -539,10 +567,11 @@ func runTargets(projectFlag string, args []string) error {
 		}
 		return nil
 	case "show":
-		if len(args) < 1 {
-			return i18n.Err("err.usage_targets_show")
+		feat, err := featureArg(cfg, firstPos(args), "err.usage_targets_show")
+		if err != nil {
+			return err
 		}
-		m, err := manifest.Load(cfg.ManifestPath(args[0]))
+		m, err := manifest.Load(cfg.ManifestPath(feat))
 		if err != nil {
 			return err
 		}
@@ -558,7 +587,7 @@ func runTargets(projectFlag string, args []string) error {
 			fmt.Println(i18n.T("targets.empty"))
 			return nil
 		}
-		fmt.Println(i18n.T("targets.show_header", args[0]))
+		fmt.Println(i18n.T("targets.show_header", feat))
 		keys := make([]string, 0, len(set))
 		for k := range set {
 			keys = append(keys, k)
@@ -567,6 +596,24 @@ func runTargets(projectFlag string, args []string) error {
 		for _, k := range keys {
 			fmt.Printf("  %-24s %s\n", k, set[k])
 		}
+		return nil
+	case "generate", "gen":
+		feat, err := featureArg(cfg, firstPos(args), "err.usage_targets_generate")
+		if err != nil {
+			return err
+		}
+		m, err := manifest.Load(cfg.ManifestPath(feat))
+		if err != nil {
+			return err
+		}
+		pd, err := projectdef.Load(cfg.ProjectDef)
+		if err != nil {
+			return err
+		}
+		if err := targetcfg.SavePreset(cfg, feat, targetcfg.CleanSet(cfg, pd, m)); err != nil {
+			return err
+		}
+		fmt.Println(i18n.T("targets.generated", feat, targetcfg.PresetPath(cfg, feat)))
 		return nil
 	default:
 		return i18n.Err("err.unknown_targets_sub", sub)
@@ -663,10 +710,11 @@ func runFeature(projectFlag string, args []string) error {
 
 	case "up":
 		pos, _ := splitFlags(args)
-		if len(pos) < 1 {
-			return i18n.Err("err.usage_sf_up")
+		feat, err := featureArg(cfg, firstPos(pos), "err.usage_sf_up")
+		if err != nil {
+			return err
 		}
-		log, err := superfeature.Up(cfg, pos[0], confirmNewBranch)
+		log, err := superfeature.Up(cfg, feat, confirmNewBranch)
 		if err != nil {
 			return err
 		}
@@ -675,14 +723,15 @@ func runFeature(projectFlag string, args []string) error {
 
 	case "status":
 		pos, _ := splitFlags(args)
-		if len(pos) < 1 {
-			return i18n.Err("err.usage_sf_status")
-		}
-		_, rows, err := superfeature.Status(cfg, pos[0])
+		feat, err := featureArg(cfg, firstPos(pos), "err.usage_sf_status")
 		if err != nil {
 			return err
 		}
-		fmt.Println(i18n.T("feature.status_header", pos[0]))
+		_, rows, err := superfeature.Status(cfg, feat)
+		if err != nil {
+			return err
+		}
+		fmt.Println(i18n.T("feature.status_header", feat))
 		if len(rows) == 0 {
 			fmt.Println(i18n.T("feature.status_none"))
 			return nil
@@ -714,30 +763,68 @@ func runFeature(projectFlag string, args []string) error {
 
 	case "down":
 		pos, _ := splitFlags(args)
-		if len(pos) < 1 {
-			return i18n.Err("err.usage_sf_down")
+		feat, err := featureArg(cfg, firstPos(pos), "err.usage_sf_down")
+		if err != nil {
+			return err
 		}
-		log, err := superfeature.Down(cfg, pos[0])
+		log, err := superfeature.Down(cfg, feat)
 		if err != nil {
 			return err
 		}
 		printLines(log)
-		fmt.Println(i18n.T("feature.down_done", pos[0]))
+		fmt.Println(i18n.T("feature.down_done", feat))
 		return nil
 
 	case "delete":
 		pos, flags := splitFlags(args)
-		if len(pos) < 1 {
-			return i18n.Err("err.usage_sf_delete")
+		feat, err := featureArg(cfg, firstPos(pos), "err.usage_sf_delete")
+		if err != nil {
+			return err
 		}
 		prune := hasFlag(flags, "prune-branch", "prune-branches")
-		if err := superfeature.Delete(cfg, pos[0], prune); err != nil {
+		if err := superfeature.Delete(cfg, feat, prune); err != nil {
 			return err
 		}
 		if prune {
-			fmt.Println(i18n.T("feature.deleted_pruned", pos[0]))
+			fmt.Println(i18n.T("feature.deleted_pruned", feat))
 		} else {
-			fmt.Println(i18n.T("feature.deleted", pos[0]))
+			fmt.Println(i18n.T("feature.deleted", feat))
+		}
+		return nil
+
+	case "relink", "verify":
+		// Validate the feature folder's back-link (.workwood/link.yml) and rewrite
+		// it if missing / out of date. With no feature it checks them all.
+		pos, _ := splitFlags(args)
+		slugs := []string{}
+		if f := firstPos(pos); f != "" {
+			slugs = []string{f}
+		} else if cfg.ActiveFeature != "" {
+			slugs = []string{cfg.ActiveFeature}
+		} else {
+			st, err := config.LoadState(cfg.StateFile)
+			if err != nil {
+				return err
+			}
+			for _, fs := range st.Features {
+				slugs = append(slugs, fs.Slug)
+			}
+			sort.Strings(slugs)
+		}
+		if len(slugs) == 0 {
+			fmt.Println(i18n.T("feature.none"))
+			return nil
+		}
+		for _, slug := range slugs {
+			regen, err := config.EnsureFeatureLink(cfg, slug)
+			if err != nil {
+				return err
+			}
+			if regen {
+				fmt.Println(i18n.T("feature.relinked", slug, cfg.FeatureLinkPath(slug)))
+			} else {
+				fmt.Println(i18n.T("feature.relink_ok", slug))
+			}
 		}
 		return nil
 
@@ -813,6 +900,27 @@ func firstNonEmpty(vals ...string) string {
 		if v != "" {
 			return v
 		}
+	}
+	return ""
+}
+
+// featureArg resolves which feature a command acts on: the explicit positional if
+// given, else the active feature implied by running inside a feature folder
+// (cfg.ActiveFeature). Errors with usageKey when neither is available.
+func featureArg(cfg *config.Config, explicit, usageKey string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	if cfg.ActiveFeature != "" {
+		return cfg.ActiveFeature, nil
+	}
+	return "", i18n.Err(usageKey)
+}
+
+// firstPos returns the first positional arg, or "" when there are none.
+func firstPos(pos []string) string {
+	if len(pos) > 0 {
+		return pos[0]
 	}
 	return ""
 }

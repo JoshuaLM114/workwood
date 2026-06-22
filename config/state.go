@@ -29,9 +29,10 @@ type ProjectState struct {
 // each an editable key → absolute path. (The yaml key is `working_set`, distinct
 // from any earlier `targets:` shape, so old files migrate by simply being ignored.)
 type FeatureState struct {
-	Slug    string            `yaml:"slug"`
-	Name    string            `yaml:"name,omitempty"` // active_name (default = slug)
-	Targets map[string]string `yaml:"working_set,omitempty"`
+	Slug       string            `yaml:"slug"`
+	Name       string            `yaml:"name,omitempty"` // active_name (default = slug)
+	Targets    map[string]string `yaml:"working_set,omitempty"`
+	LastPreset string            `yaml:"last_preset,omitempty"` // last targets preset loaded/saved (UI memory)
 }
 
 // LoadState reads a workwood-state.yml. A missing file yields empty state (not an
@@ -119,6 +120,18 @@ func (s *ProjectState) SetWorkingSet(uuid string, set map[string]string) {
 		set = nil
 	}
 	f.Targets = set
+	s.Features[uuid] = f
+}
+
+// LastPreset returns the targets preset last loaded/saved for a feature, or "".
+func (s *ProjectState) LastPreset(uuid string) string {
+	return s.Features[uuid].LastPreset
+}
+
+// SetLastPreset records the targets preset last loaded/saved for a feature.
+func (s *ProjectState) SetLastPreset(uuid, name string) {
+	f := s.Features[uuid]
+	f.LastPreset = name
 	s.Features[uuid] = f
 }
 

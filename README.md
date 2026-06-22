@@ -22,6 +22,7 @@ link, not as a path segment).
 | **Your per-project state** — editable names, target working sets | `$WORKWOOD_DATA/workwood-state.yml` | you | no |
 | **Saved target presets** | `$WORKWOOD_DATA/targets/<name>.yml` | you | no |
 | **Base clones + feature worktrees** | `$WORKWOOD_DATA/{main,features}/` (fixed, not configurable) | you | no |
+| **Feature back-link** — lets you run from a feature folder | `$WORKWOOD_DATA/features/<feature>/.workwood/link.yml` | you | no |
 | **Global app settings** — language, update-check, data-dir fallback | `~/.workwood/config.yaml` | you | no |
 
 The split is deliberate: everything **shared and portable** is committed in the
@@ -182,6 +183,34 @@ non-nesting name.
 Commit `super-features/voice.yaml` and push it. A teammate then `git pull`s,
 runs `workwood repos pull`, and `workwood sf up voice` rebuilds the exact set.
 
+### Working from inside a feature folder
+
+You don't have to keep a terminal in the super-repo. Each feature folder
+(`$WORKWOOD_DATA/features/<feature>/`) gets a back-link at
+`.workwood/link.yml` pointing at your super-repo + data dir. So from a feature
+folder — or any worktree inside it — workwood resolves the parent project on its
+own, **even with `$WORKWOOD_DATA` unset**, and **defaults the feature** from where
+you are:
+
+```sh
+cd "$WORKWOOD_DATA/features/voice/api"   # a worktree inside the feature
+workwood action tmux                     # no feature arg — uses "voice"
+workwood targets show                    # same
+workwood                                 # the TUI opens straight into voice's Actions panel
+```
+
+In the TUI, launching from a feature folder jumps into that feature's **Actions
+panel**; pressing **esc** drops to the full menu, so you can still edit the parent
+project's repos, manifests, and settings. The link is written on `sf create` /
+`sf up` and back-filled by `workwood init`.
+
+The link file carries its own `version`. The **TUI** validates every built
+feature's link on launch and, if any are missing/stale/moved, shows a warning on
+the root-menu status bar — press **`r`** to repair them. The **CLI** `workwood
+action` self-heals the link as it runs, and `workwood sf relink [feature]`
+validates a feature's folder + link (all features with no arg) and regenerates any
+that need it.
+
 ## Actions + targets
 
 workwood is deliberately **dumb about meaning**. A **target** is just a named
@@ -203,8 +232,15 @@ feature editor):
   feature). If the path is a git repo, the key defaults to its current branch;
   otherwise you type a key.
 - **r** renames a key; **S** saves the working set as a named **preset**; **L**
-  loads one. Presets live at `$WORKWOOD_DATA/targets/<name>.yml`
+  loads one; **g** regenerates this feature's `<feature>.yml` preset from the
+  current repos + worktrees. Presets live at `$WORKWOOD_DATA/targets/<name>.yml`
   (plain `key: /abs/path` YAML) and are reusable across features.
+
+Creating a super-feature seeds a starting preset named after it
+(`$WORKWOOD_DATA/targets/<feature>.yml`); `g` (TUI) or `workwood targets generate
+<feature>` (CLI) refresh it once you've added worktrees. The **Save** dialog
+remembers the last preset you loaded and jumps to that name, suggests existing
+preset names, and asks before overwriting one.
 
 **Multi-service repos:** if a repo (or worktree) ships a committed
 `.workwood/targets.yml` (a `serviceName → subpath` map), the tree expands it into
@@ -292,14 +328,19 @@ scripts, no tool-imposed semantics.
 | `workwood sf remove <name> <repo> [wt-branch] [--prune-branch]` | remove ONE worktree (+ optionally its branch) |
 | `workwood sf down <name>` | remove ALL worktrees, keep the manifest |
 | `workwood sf delete <name> [--prune-branches]` | remove worktrees + manifest (+ branches) |
-| `workwood action <name> <feature> [--targets <preset\|file>]` | run an action against the feature's working set (or a preset) |
+| `workwood sf relink [feature]` | validate a feature folder's back-link + regenerate it if missing/stale (all features if omitted) |
+| `workwood action <name> [feature] [--targets <preset\|file>]` | run an action against the feature's working set (or a preset) |
 | `workwood actions` | list available actions |
-| `workwood targets list\|show <feature>` | list saved presets / show a feature's working set |
+| `workwood targets list` | list saved presets |
+| `workwood targets show [feature]` | show a feature's working set |
+| `workwood targets generate [feature]` | (re)write `<feature>.yml` from current repos + worktrees |
 | `workwood lang [en\|ja]` | show or set the UI language |
 | `workwood version` | print the build + file-schema version |
 
 `super-feature` and `sf` are interchangeable. `-p/--project <path>` works on any
-project-scoped command; super-feature commands take the feature's **slug**.
+project-scoped command; super-feature commands take the feature's **slug**. The
+`[feature]` arg is optional when you run from inside a feature folder — it defaults
+to that feature (likewise `sf up`/`status`/`down`/`delete`).
 
 ## Languages
 

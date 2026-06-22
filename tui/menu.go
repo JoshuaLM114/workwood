@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 
+	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -43,6 +44,18 @@ func (mm menuModel) update(m *Model, msg tea.Msg) (menuModel, tea.Cmd) {
 			case menuSettings:
 				return mm, func() tea.Msg { return openSettingsMsg{} }
 			}
+		case "r":
+			// Repair any feature back-links flagged broken by the boot check.
+			if len(m.brokenLinks) > 0 {
+				fixed := 0
+				for _, slug := range m.brokenLinks {
+					if _, err := config.EnsureFeatureLink(m.cfg, slug); err == nil {
+						fixed++
+					}
+				}
+				m.brokenLinks = nil
+				m.linkNotice = okStyle.Render(i18n.T("tui.menu.links_fixed", fixed))
+			}
 		}
 	}
 	return mm, nil
@@ -73,6 +86,9 @@ func (mm menuModel) View(m *Model) string {
 	}
 	if m.syncWarning != "" {
 		b.WriteString("\n" + warnStyle.Render(m.syncWarning) + "\n")
+	}
+	if m.linkNotice != "" {
+		b.WriteString("\n" + m.linkNotice + "\n") // already styled (warn or ok)
 	}
 	b.WriteString("\n" + helpStyle.Render(i18n.T("tui.menu.help")))
 	return docStyle.Render(b.String())

@@ -58,7 +58,7 @@
   "log.removed": "removed: %s",
   "log.added": "added: %s @ %s -> %s",
   "usage.main": "workwood — git-worktree orchestration for multi-repo super-features\n\nUsage:\n  workwood                                 launch the interactive super-feature editor (TUI)\n  workwood init [path]                     scaffold/sync this super-repo (idempotent)\n  workwood project [info|rename <name>]    show or rename the current project (local label)\n  workwood repos  [pull|list]              manage base reference clones in main_dir\n  workwood super-feature <subcommand>      manage a super-feature (alias: sf; see: workwood sf help)\n  workwood action <name> <feature> [--targets <preset>]  run an action against the feature's selected targets\n  workwood actions                         list available actions\n  workwood targets [list|show <feature>]   list saved target presets / show a feature's targets\n  workwood lang [en|ja]                    show or set the UI language\n  workwood version                         print the build + file-schema version\n\nGlobal:\n  -p, --project <path>                     act on the super-repo at <path> (else: walk up from cwd)\n",
-  "usage.feature": "Usage: workwood super-feature <command> [args]   (alias: sf)\n\nCommands:\n  create <name> [description]                     create a super-feature manifest\n  rename <slug> <new-name>                        set this developer's local display name (slug stays fixed)\n  add    <name> <repo> <worktree-branch-name> [--from <source>] [--no-feature-prefix]\n                                                  add a worktree (from <repo>) on branch <name>/<worktree-branch-name>\n  up     <name>                                   rebuild all worktrees from the manifest\n  remove <name> <repo> [sub-branch] [--prune-branch]\n                                                  remove ONE worktree (+ optionally its branch)\n  down   <name>                                   remove ALL worktrees, keep the manifest\n  status <name>                                   branch + dirty state per worktree\n  list                                            list all super-features\n  delete <name> [--prune-branches]                remove worktrees + manifest (+ branches)\n",
+  "usage.feature": "Usage: workwood super-feature <command> [args]   (alias: sf)\n\nCommands:\n  create <name> [description]                     create a super-feature manifest\n  rename <slug> <new-name>                        set this developer's local display name (slug stays fixed)\n  add    <name> <repo> <worktree-branch-name> [--from <source>] [--no-feature-prefix]\n                                                  add a worktree (from <repo>) on branch <name>/<worktree-branch-name>\n  up     <name>                                   rebuild all worktrees from the manifest\n  remove <name> <repo> [sub-branch] [--prune-branch]\n                                                  remove ONE worktree (+ optionally its branch)\n  down   <name>                                   remove ALL worktrees, keep the manifest\n  status <name>                                   branch + dirty state per worktree\n  list                                            list all super-features\n  delete <name> [--prune-branches]                remove worktrees + manifest (+ branches)\n  relink [feature]                                validate a feature folder's back-link, regenerate if missing/stale\n",
   "tui.error": "error: %s",
   "tui.press_q": "press q to quit",
   "tui.new_feature": "New super-feature",
@@ -143,7 +143,7 @@
   "targets.list_header": "saved target presets:",
   "targets.show_header": "targets for %s:",
   "tui.actions.title": "Actions · %s",
-  "tui.actions.help": "↑/↓ · space toggle · enter expand · p add · r rename · S/L preset · d action · R run · f refresh · esc back",
+  "tui.actions.help": "↑/↓ · space toggle · enter expand · p add · r rename · g regen · S/L preset · d action · R run · f refresh · esc back",
   "tui.actions.tree_empty": "no targets — add reference repos in workwood.yml or worktrees to this feature",
   "tui.actions.missing": "(missing)",
   "tui.actions.need_key": "no git branch found — enter a key for this path",
@@ -225,5 +225,14 @@
   "tui.menu.out_of_sync": "⚠ behind origin: %s — open Edit project, press p to fetch+pull (optional)",
   "tui.repos.br_local": "local",
   "tui.repos.br_remote": "remote",
-  "tui.repos.fetching_branches": "fetching branches for %s…"
+  "tui.repos.fetching_branches": "fetching branches for %s…",
+  "err.stale_link": "feature link %s points to %s, but no workwood.yml is there — run `workwood sf up` from the super-repo to refresh it",
+  "targets.generated": "generated targets preset %q at %s",
+  "err.usage_targets_generate": "usage: workwood targets generate <feature>  (or run inside a feature folder)",
+  "tui.actions.overwrite_confirm": "Preset %q exists — overwrite it?",
+  "tui.actions.regenerated": "regenerated preset %q from current repos + worktrees",
+  "feature.relinked": "relinked %s — wrote %s",
+  "feature.relink_ok": "%s — link OK",
+  "tui.menu.links_broken": "⚠ feature link(s) need repair: %s — press r to fix",
+  "tui.menu.links_fixed": "✓ repaired %d feature link(s)"
 }

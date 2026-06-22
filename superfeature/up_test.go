@@ -39,6 +39,7 @@ func TestCreateUsesShorthandForBranch(t *testing.T) {
 		MainDir:      mainDir,
 		FeaturesDir:  filepath.Join(root, "features"),
 		ManifestsDir: filepath.Join(root, "manifests"),
+		StateDir:     filepath.Join(root, "state"),
 		StateFile:    filepath.Join(root, "state.yml"),
 	}
 

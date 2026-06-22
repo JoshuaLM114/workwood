@@ -84,6 +84,8 @@ func RunAction(cfg *config.Config, slug, name string, override targetcfg.Set) er
 	if m.ID == "" {
 		return i18n.Err("err.feature_not_adopted", slug)
 	}
+	// Self-heal the back-link so running an action repairs a missing/stale one.
+	_, _ = config.EnsureFeatureLink(cfg, slug)
 	set := override
 	if set == nil {
 		pd, perr := projectdef.Load(cfg.ProjectDef)
@@ -147,6 +149,16 @@ func Create(cfg *config.Config, slug, shorthand, desc string) error {
 	}
 	if err := manifest.Save(path, m); err != nil {
 		return err
+	}
+	// Drop the back-link so the tool can later be run from this feature folder.
+	if err := config.WriteFeatureLink(cfg, slug); err != nil {
+		return err
+	}
+	// Seed a starting targets preset named after the feature (repos only — no
+	// worktrees yet). Best-effort: the user can regenerate it after adding worktrees
+	// (`workwood targets generate`), so a hiccup here shouldn't fail Create.
+	if pd, e := projectdef.Load(cfg.ProjectDef); e == nil {
+		_ = targetcfg.SavePreset(cfg, slug, targetcfg.CleanSet(cfg, pd, m))
 	}
 	st, err := config.LoadState(cfg.StateFile)
 	if err != nil {
@@ -319,6 +331,11 @@ func Up(cfg *config.Config, name string, onNew func(repo, branch string) bool) (
 		return nil, err
 	}
 	if err := os.MkdirAll(cfg.FeatureDir(name), 0o755); err != nil {
+		return nil, err
+	}
+	// Refresh the back-link (also (re)written here so a fresh checkout that rebuilds
+	// from the manifest gets a link pointing at THIS developer's super-repo).
+	if err := config.WriteFeatureLink(cfg, name); err != nil {
 		return nil, err
 	}
 	var log []string

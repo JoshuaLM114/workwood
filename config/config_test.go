@@ -8,7 +8,7 @@ import (
 	"github.com/JoshuaLM114/workwood/projectdef"
 )
 
-func TestFindProjectRoot(t *testing.T) {
+func TestFindProject(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, ProjectDefName), []byte("id: x\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -17,14 +17,114 @@ func TestFindProjectRoot(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := findProjectRoot(sub); got != root {
+	if got, _, _, _ := findProject(sub); got != root {
 		t.Fatalf("walk-up: got %q want %q", got, root)
 	}
-	if got := findProjectRoot(root); got != root {
+	if got, _, _, _ := findProject(root); got != root {
 		t.Fatalf("at-root: got %q want %q", got, root)
 	}
-	if got := findProjectRoot(t.TempDir()); got != "" {
+	if got, _, _, _ := findProject(t.TempDir()); got != "" {
 		t.Fatalf("no project: got %q want \"\"", got)
+	}
+}
+
+// A feature folder's link.yml resolves to its parent super-repo + active feature,
+// and is preferred over a workwood.yml higher up (deepest match wins).
+func TestFindProjectViaFeatureLink(t *testing.T) {
+	superRepo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(superRepo, ProjectDefName), []byte("id: pid\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+	featDir := filepath.Join(dataDir, "features", "voice")
+	cfg := &Config{Root: superRepo, DataDir: dataDir, ProjectID: "pid", FeaturesDir: filepath.Join(dataDir, "features")}
+	if err := WriteFeatureLink(cfg, "voice"); err != nil {
+		t.Fatal(err)
+	}
+	// From a worktree subdir deep inside the feature folder.
+	deep := filepath.Join(featDir, "api", "src")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, gotData, feature, err := findProject(deep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != superRepo || gotData != dataDir || feature != "voice" {
+		t.Fatalf("findProject = (%q,%q,%q), want (%q,%q,voice)", root, gotData, feature, superRepo, dataDir)
+	}
+
+	// A link pointing at a vanished super-repo is a StaleLinkError.
+	cfg.Root = filepath.Join(t.TempDir(), "gone")
+	if err := WriteFeatureLink(cfg, "voice"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := findProject(deep); err == nil {
+		t.Error("stale link should error")
+	}
+}
+
+// LocateProject from deep inside a feature folder resolves the parent super-repo
+// + its data dir + the active feature, with no env or cwd in the super-repo.
+func TestLocateProjectViaLink(t *testing.T) {
+	superRepo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(superRepo, ProjectDefName), []byte("id: pid\nname: demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+	cfg := &Config{Root: superRepo, DataDir: dataDir, ProjectID: "pid", FeaturesDir: filepath.Join(dataDir, "features")}
+	if err := WriteFeatureLink(cfg, "voice"); err != nil {
+		t.Fatal(err)
+	}
+	deep := filepath.Join(dataDir, "features", "voice", "api")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loc, err := LocateProject(deep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loc.Root != superRepo || loc.DataDir != dataDir || loc.ActiveFeature != "voice" {
+		t.Fatalf("loc = %+v, want root=%q data=%q feature=voice", loc, superRepo, dataDir)
+	}
+}
+
+func TestEnsureFeatureLink(t *testing.T) {
+	superRepo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(superRepo, ProjectDefName), []byte("id: pid\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+	cfg := &Config{Root: superRepo, DataDir: dataDir, ProjectID: "pid", FeaturesDir: filepath.Join(dataDir, "features")}
+
+	// Missing → regenerated, then valid.
+	if regen, err := EnsureFeatureLink(cfg, "voice"); err != nil || !regen {
+		t.Fatalf("missing link should regenerate: regen=%v err=%v", regen, err)
+	}
+	if !FeatureLinkValid(cfg, "voice") {
+		t.Fatal("link should be valid right after writing")
+	}
+	// Already valid → not rewritten.
+	if regen, _ := EnsureFeatureLink(cfg, "voice"); regen {
+		t.Error("a valid link should not be rewritten")
+	}
+
+	// Inconsistent (super-repo moved) → invalid → regenerated for the new config.
+	moved := &Config{Root: t.TempDir(), DataDir: dataDir, ProjectID: "pid", FeaturesDir: cfg.FeaturesDir}
+	if FeatureLinkValid(moved, "voice") {
+		t.Fatal("a link pointing elsewhere should be invalid for the moved config")
+	}
+	if regen, _ := EnsureFeatureLink(moved, "voice"); !regen {
+		t.Error("inconsistent link should regenerate")
+	}
+
+	// A future link version is treated as out of date.
+	raw := "version: 99\nsuper_repo: " + superRepo + "\ndata_dir: " + dataDir + "\nproject: pid\nfeature: voice\n"
+	if err := os.WriteFile(cfg.FeatureLinkPath("voice"), []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if FeatureLinkValid(cfg, "voice") {
+		t.Error("a newer-than-current link version should be invalid (triggers regenerate)")
 	}
 }
 

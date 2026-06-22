@@ -65,6 +65,12 @@ func PresetPath(cfg *config.Config, name string) string {
 	return filepath.Join(PresetsDir(cfg), name+".yml")
 }
 
+// PresetExists reports whether a named preset file is already on disk.
+func PresetExists(cfg *config.Config, name string) bool {
+	_, err := os.Stat(PresetPath(cfg, name))
+	return err == nil
+}
+
 // ListPresets returns the saved preset names (file stems), sorted.
 func ListPresets(cfg *config.Config) []string {
 	entries, err := os.ReadDir(PresetsDir(cfg))

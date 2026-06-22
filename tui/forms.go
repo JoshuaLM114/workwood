@@ -237,6 +237,24 @@ func newAddRepoForm(v *repoVals) *huh.Form {
 	)
 }
 
+// branchVals binds the edit-default-branch form.
+type branchVals struct{ branch string }
+
+// newEditBranchForm edits a repo's default branch (which also checks the base
+// clone out to it).
+func newEditBranchForm(v *branchVals) *huh.Form {
+	return form(
+		huh.NewGroup(
+			huh.NewInput().
+				Key("branch").
+				Title(i18n.T("tui.repos.form_branch")).
+				Description(i18n.T("tui.repos.edit_branch_desc")).
+				Value(&v.branch).
+				Validate(required),
+		),
+	)
+}
+
 // selectVals binds a single-choice select form.
 type selectVals struct {
 	choice string

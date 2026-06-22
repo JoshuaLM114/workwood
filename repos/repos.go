@@ -55,6 +55,23 @@ func Unready(cfg *config.Config, pd *projectdef.File) []string {
 	return bad
 }
 
+// ActiveBranch returns the branch currently checked out in a base clone, or "" if
+// dir isn't a real clone (or HEAD is detached / unreadable).
+func ActiveBranch(dir string) string {
+	if ClassifyClone(dir) != StateClone {
+		return ""
+	}
+	b, err := gitx.CurrentBranch(dir)
+	if err != nil {
+		return ""
+	}
+	return b
+}
+
+// Checkout switches a base clone to branch. git's DWIM creates a local branch
+// tracking origin/<branch> when there's no matching local branch.
+func Checkout(dir, branch string) error { return gitx.Checkout(dir, branch) }
+
 // Sync clones missing repos and fetches existing ones (parking each on its default
 // branch, fast-forwarded). Unlike Pull it captures git/gh output and returns a log,
 // so the TUI can run it without corrupting the terminal. Returns the lines done.

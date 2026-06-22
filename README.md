@@ -124,10 +124,13 @@ Running `workwood` (no args) opens a root menu with three entries:
 
 - **Super-features** — the feature picker; create one, or open one to edit its
   worktrees (then `o` for its Actions screen).
-- **Edit project** — add/remove the base repos in `workwood.yml` (`a` to add, `d`
-  to remove). Each repo shows its clone state under `main_dir`; ones that aren't a
-  real clone (missing, or a stray worktree rather than the main git) are listed in
-  **red**, and `p` fetches + pulls them all (cloning any that are missing).
+- **Edit project** — add/remove the base repos in `workwood.yml` (`a` add, `d`
+  remove), and `e` to set a repo's **default branch** (which checks the base clone
+  out to it, reporting any error). The table shows each repo's configured
+  **Default** branch next to the **Active** branch actually checked out under
+  `main_dir` — a mismatch is flagged (⚠) so divergences are obvious. Repos that
+  aren't a real clone (missing, or a stray worktree rather than the main git) are
+  listed in **red**, and `p` fetches + pulls them all (cloning any that are missing).
 - **⚙ Settings** — language, update-check, and this project's display name.
 
 ## Super-features

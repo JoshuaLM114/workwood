@@ -663,7 +663,7 @@ func runFeature(projectFlag string, args []string) error {
 		if len(pos) < 1 {
 			return i18n.Err("err.usage_sf_up")
 		}
-		log, err := superfeature.Up(cfg, pos[0])
+		log, err := superfeature.Up(cfg, pos[0], confirmNewBranch)
 		if err != nil {
 			return err
 		}
@@ -812,6 +812,24 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// confirmNewBranch asks whether to create a new local branch for a worktree whose
+// branch is on neither the local repo nor origin (used by `sf up`). Defaults to
+// yes; a non-interactive stdin (EOF) also yields yes, so scripts aren't blocked.
+func confirmNewBranch(repo, branch string) bool {
+	fmt.Print(i18n.T("sf.up_no_remote", branch, repo))
+	sc := bufio.NewScanner(os.Stdin)
+	if !sc.Scan() {
+		fmt.Println()
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(sc.Text())) {
+	case "", "y", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // prompt asks for a value on stdin, returning def if the line is empty.

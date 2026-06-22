@@ -388,7 +388,10 @@ func (e *editorModel) applyCmd() tea.Cmd {
 func (e *editorModel) upCmd() tea.Cmd {
 	cfg, name := e.m.cfg, e.name
 	return func() tea.Msg {
-		log, err := superfeature.Up(cfg, name)
+		// nil onNew: auto-create new local branches. The editor runs off the event
+		// loop and can't prompt mid-rebuild; in the editor you own the feature, so
+		// creating its branches is expected. (The CLI `sf up` prompts.)
+		log, err := superfeature.Up(cfg, name, nil)
 		return upDoneMsg{log: log, err: err}
 	}
 }

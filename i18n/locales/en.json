@@ -171,9 +171,8 @@
   "tui.menu.project_desc": "add or remove the project's base repos",
   "tui.menu.help": "↑/↓ move · enter open · q quit",
   "tui.repos.title": "Edit project · %s",
-  "tui.repos.help": "a add · d remove · p fetch+pull · esc back · q quit",
+  "tui.repos.help": "a add · e set-default-branch · d remove · p fetch+pull · esc back · q quit",
   "tui.repos.empty": "no repos yet — press a to add one",
-  "tui.repos.col_url": "URL (optional)",
   "tui.repos.add_title": "Add a base repo",
   "tui.repos.added": "added %q (commit workwood.yml to share it)",
   "tui.repos.removed": "removed %q (commit workwood.yml)",
@@ -205,5 +204,15 @@
   "tui.actions.selected": "Action:  ▸ %s",
   "tui.actions.refreshed": "found %d action(s)",
   "tui.title.choose_action": "Choose an action",
-  "actions.need_chmod": "⚠ %s has the marker but isn't executable — run `chmod +x` on it (then press f to refresh)"
+  "actions.need_chmod": "⚠ %s has the marker but isn't executable — run `chmod +x` on it (then press f to refresh)",
+  "sf.up_no_remote": "no remote branch for %q (%s) — create it as a new local branch? [Y/n] ",
+  "log.skip_no_remote": "skip %s @ %s — no remote branch (declined)",
+  "tui.repos.col_default": "Default",
+  "tui.repos.col_active": "Active",
+  "tui.repos.edit_branch_title": "Set default branch",
+  "tui.repos.edit_branch_desc": "workwood checks the base clone out to this branch",
+  "tui.repos.checked_out": "%s → checked out %s",
+  "tui.repos.checkout_failed": "checkout %q failed: %s",
+  "tui.repos.default_set": "%s default branch → %s (not cloned yet)",
+  "tui.repos.diverged": "⚠ default is %s"
 }

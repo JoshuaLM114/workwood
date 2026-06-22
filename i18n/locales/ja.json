@@ -171,9 +171,8 @@
   "tui.menu.project_desc": "プロジェクトのベース repo を追加・削除",
   "tui.menu.help": "↑/↓ 移動 · enter 開く · q 終了",
   "tui.repos.title": "プロジェクトを編集 · %s",
-  "tui.repos.help": "a 追加 · d 削除 · p 取得+プル · esc 戻る · q 終了",
+  "tui.repos.help": "a 追加 · e デフォルトブランチ · d 削除 · p 取得+プル · esc 戻る · q 終了",
   "tui.repos.empty": "repo がありません — a で追加",
-  "tui.repos.col_url": "URL（任意）",
   "tui.repos.add_title": "ベース repo を追加",
   "tui.repos.added": "%q を追加しました（workwood.yml をコミットして共有）",
   "tui.repos.removed": "%q を削除しました（workwood.yml をコミット）",
@@ -205,5 +204,15 @@
   "tui.actions.selected": "アクション:  ▸ %s",
   "tui.actions.refreshed": "%d 個のアクションが見つかりました",
   "tui.title.choose_action": "アクションを選択",
-  "actions.need_chmod": "⚠ %s はマーカーがありますが実行可能ではありません — `chmod +x` を実行してください（その後 f で更新）"
+  "actions.need_chmod": "⚠ %s はマーカーがありますが実行可能ではありません — `chmod +x` を実行してください（その後 f で更新）",
+  "sf.up_no_remote": "%q (%s) のリモートブランチがありません — 新しいローカルブランチを作成しますか? [Y/n] ",
+  "log.skip_no_remote": "スキップ %s @ %s — リモートブランチなし（拒否）",
+  "tui.repos.col_default": "デフォルト",
+  "tui.repos.col_active": "アクティブ",
+  "tui.repos.edit_branch_title": "デフォルトブランチを設定",
+  "tui.repos.edit_branch_desc": "workwood はベースクローンをこのブランチにチェックアウトします",
+  "tui.repos.checked_out": "%s → %s をチェックアウトしました",
+  "tui.repos.checkout_failed": "%q のチェックアウトに失敗: %s",
+  "tui.repos.default_set": "%s のデフォルトブランチ → %s（未クローン）",
+  "tui.repos.diverged": "⚠ デフォルトは %s"
 }

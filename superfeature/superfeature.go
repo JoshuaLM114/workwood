@@ -302,7 +302,12 @@ func slugify(s string) string {
 
 // Up rebuilds every worktree a manifest records (idempotent) — how a fresh
 // checkout reconstructs the exact feature set after `repos pull`.
-func Up(cfg *config.Config, name string) ([]string, error) {
+//
+// For a worktree whose branch exists on NEITHER the local repo nor origin (after
+// fetching), rebuilding would invent a brand-new local branch. onNew, if non-nil,
+// is asked first — return false to skip that worktree instead of creating it. A
+// nil onNew creates them without asking (the non-interactive default).
+func Up(cfg *config.Config, name string, onNew func(repo, branch string) bool) ([]string, error) {
 	path := cfg.ManifestPath(name)
 	m, err := manifest.Load(path)
 	if err != nil {
@@ -324,6 +329,14 @@ func Up(cfg *config.Config, name string) ([]string, error) {
 			continue
 		}
 		gitx.Fetch(baseRepo)
+		// No existing branch anywhere → this would create a new local branch.
+		if onNew != nil &&
+			!gitx.HasLocalBranch(baseRepo, w.Branch) &&
+			!gitx.HasRemoteBranch(baseRepo, w.Branch) &&
+			!onNew(w.Repo, w.Branch) {
+			log = append(log, i18n.T("log.skip_no_remote", w.Repo, w.Branch))
+			continue
+		}
 		if err := addWorktree(baseRepo, w.Branch, w.Base, abs); err != nil {
 			return log, err
 		}

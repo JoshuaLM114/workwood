@@ -615,7 +615,7 @@ func runFeature(projectFlag string, args []string) error {
 		return nil
 
 	case "create":
-		pos, _ := splitFlags(args)
+		pos, flags := splitFlags(args)
 		if len(pos) < 1 {
 			return i18n.Err("err.usage_sf_create")
 		}
@@ -623,11 +623,15 @@ func runFeature(projectFlag string, args []string) error {
 		if len(pos) > 1 {
 			desc = pos[1]
 		}
-		if err := superfeature.Create(cfg, pos[0], desc); err != nil {
+		shorthand := flags["shorthand"]
+		if err := superfeature.Create(cfg, pos[0], shorthand, desc); err != nil {
 			return err
 		}
-		fmt.Println(i18n.T("feature.created", cfg.ManifestPath(pos[0])))
-		fmt.Println(i18n.T("feature.add_hint", pos[0], pos[0]))
+		if shorthand == "" {
+			shorthand = manifest.DefaultShorthand(pos[0])
+		}
+		fmt.Println(i18n.T("feature.created", cfg.ManifestPath(pos[0]), shorthand))
+		fmt.Println(i18n.T("feature.add_hint", pos[0], shorthand))
 		return nil
 
 	case "rename":
@@ -774,7 +778,7 @@ func renameFeature(cfg *config.Config, slug, newName string) error {
 // positional args. Boolean flags map to "".
 func splitFlags(args []string) (pos []string, flags map[string]string) {
 	flags = map[string]string{}
-	valueFlags := map[string]bool{"from": true, "source": true, "name": true, "targets": true}
+	valueFlags := map[string]bool{"from": true, "source": true, "name": true, "targets": true, "shorthand": true}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if len(a) > 2 && a[:2] == "--" {

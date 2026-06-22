@@ -34,9 +34,10 @@ registry.
 ### Two names per thing
 
 A project and each super-feature have an **immutable original name** (the *slug*,
-committed) that drives every filename, git branch prefix, and worktree dir — and
-an **editable active name** (local, in `workwood-state.yml`) that's just your
-display label. Renaming changes only the active name; the slug never moves.
+committed) that drives the filename and worktree dir — and an **editable active
+name** (local, in `workwood-state.yml`) that's just your display label. Renaming
+changes only the active name; the slug never moves. A super-feature additionally
+has a committed **shorthand** that prefixes its git branches (see Super-features).
 
 ## Install
 
@@ -128,21 +129,34 @@ Running `workwood` (no args) opens a root menu with three entries:
   remove), and `e` to set a repo's **default branch** (which checks the base clone
   out to it, reporting any error). The table shows each repo's configured
   **Default** branch next to the **Active** branch actually checked out under
-  `main_dir` — a mismatch is flagged (⚠) so divergences are obvious. Repos that
-  aren't a real clone (missing, or a stray worktree rather than the main git) are
-  listed in **red**, and `p` fetches + pulls them all (cloning any that are missing).
+  `main_dir` — a mismatch is flagged (⚠) so divergences are obvious. The last
+  column shows each clone's **sync position** relative to origin
+  (`up to date` / `↓ N behind` / `↑ N ahead` / diverged), refreshed by the on-boot
+  fetch (below); behind clones are highlighted. Repos that aren't a real clone
+  (missing, or a stray worktree rather than the main git) are listed in **red**,
+  and `p` fetches + pulls them all (cloning any that are missing).
 - **⚙ Settings** — language, update-check, and this project's display name.
+
+On launch the TUI does a **background `git fetch`** of every ref clone (read-only
+— it never pulls or touches your working tree) and, if any clone is behind origin,
+shows a one-line warning on the main menu. Pulling is never forced; use Edit
+project → `p` (or `workwood repos pull`) when you choose to.
 
 ## Super-features
 
 A super-feature is a tracked manifest recording every worktree + branch that
-belongs to it. The branch is always `<feature>/<worktree-branch-name>`; the
-`<repo>` argument only says which base clone to cut from.
+belongs to it. Each feature has a **shorthand** — a short branch prefix recorded
+in the manifest — so worktree branches are `<shorthand>/<worktree-branch-name>`.
+On `create` the shorthand defaults to the initials of the name
+(`my-new-super-feature` → `mnsf`); override it with `--shorthand`. Because the
+manifest stores both `feature:` and `shorthand:`, anyone seeing a branch like
+`mnsf/api` can open the manifest yml and map it back to the feature.
 
 ```sh
-workwood sf create voice "cross-service voice work"
-workwood sf add voice api feature/integrate     # -> branch voice/feature/integrate
-workwood sf add voice db schema                 # -> branch voice/schema
+workwood sf create voice "cross-service voice work"   # shorthand → v
+workwood sf create my-new-super-feature --shorthand mns
+workwood sf add voice api feature/integrate     # -> branch v/feature/integrate
+workwood sf add voice db schema                 # -> branch v/schema
 workwood sf add voice api web                   # 2nd worktree of api -> dir api--web
 workwood sf add voice lib hotfix --no-feature-prefix   # -> raw branch hotfix
 workwood sf add voice db pg17 --from chore/pg17        # cut from a specific source

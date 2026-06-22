@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -60,6 +61,23 @@ func HasRemoteBranch(repo, branch string) bool {
 // "main"). Returns "HEAD" for a detached head; errors when dir isn't a git repo.
 func CurrentBranch(dir string) (string, error) {
 	return output(dir, "rev-parse", "--abbrev-ref", "HEAD")
+}
+
+// AheadBehind reports how far the current branch is ahead of / behind its
+// upstream (origin tracking branch). ok is false when there's no upstream or HEAD
+// is detached. Run after a fetch for accurate numbers.
+func AheadBehind(dir string) (ahead, behind int, ok bool) {
+	out, err := output(dir, "rev-list", "--left-right", "--count", "@{u}...HEAD")
+	if err != nil {
+		return 0, 0, false
+	}
+	f := strings.Fields(out)
+	if len(f) != 2 {
+		return 0, 0, false
+	}
+	behind, _ = strconv.Atoi(f[0]) // commits in @{u} not HEAD
+	ahead, _ = strconv.Atoi(f[1])  // commits in HEAD not @{u}
+	return ahead, behind, true
 }
 
 // LocalBranches lists short names of every local branch in repo.

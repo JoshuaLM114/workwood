@@ -55,6 +55,46 @@ func Unready(cfg *config.Config, pd *projectdef.File) []string {
 	return bad
 }
 
+// SyncInfo is a clone's position relative to its upstream after a fetch.
+type SyncInfo struct {
+	Ahead, Behind int
+	HasUpstream   bool
+}
+
+// OutOfSync reports whether origin has commits the local clone doesn't (behind) —
+// the case worth warning about, since the developer probably wants to pull.
+func (s SyncInfo) OutOfSync() bool { return s.HasUpstream && s.Behind > 0 }
+
+// AheadBehind returns how far a base clone's current branch is from its upstream.
+func AheadBehind(dir string) SyncInfo {
+	a, b, ok := gitx.AheadBehind(dir)
+	return SyncInfo{Ahead: a, Behind: b, HasUpstream: ok}
+}
+
+// FetchAll fetches every real clone (quiet, best-effort). It does NOT clone, pull,
+// or check anything out — it only refreshes origin refs so sync state is accurate.
+func FetchAll(cfg *config.Config, pd *projectdef.File) {
+	for _, r := range pd.Repos {
+		dir := cfg.BaseRepo(r.Name)
+		if ClassifyClone(dir) == StateClone {
+			_ = gitx.FetchAllQuiet(dir)
+		}
+	}
+}
+
+// OutOfSync returns the names of clones that are behind their upstream (run after
+// FetchAll for current numbers).
+func OutOfSync(cfg *config.Config, pd *projectdef.File) []string {
+	var out []string
+	for _, r := range pd.Repos {
+		dir := cfg.BaseRepo(r.Name)
+		if ClassifyClone(dir) == StateClone && AheadBehind(dir).OutOfSync() {
+			out = append(out, r.Name)
+		}
+	}
+	return out
+}
+
 // ActiveBranch returns the branch currently checked out in a base clone, or "" if
 // dir isn't a real clone (or HEAD is detached / unreadable).
 func ActiveBranch(dir string) string {

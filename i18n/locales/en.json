@@ -22,7 +22,7 @@
   "err.unknown_repos_sub": "unknown repos subcommand: %s",
   "feature.none": "No super-features yet. Create one: workwood sf create <name>",
   "feature.list_meta": "%2d worktree(s)  %s",
-  "feature.created": "Created super-feature manifest: %s",
+  "feature.created": "Created super-feature manifest: %s  (shorthand: %s)",
   "feature.add_hint": "Add work with: workwood sf add %s <repo> <worktree-branch-name> [--from <source>]   (branch = %s/<worktree-branch-name>)",
   "feature.added": "Added %s @ %s -> %s",
   "feature.status_header": "super-feature: %s",
@@ -32,7 +32,7 @@
   "feature.down_done": "Removed worktrees for %q (manifest kept)",
   "feature.deleted": "Deleted super-feature %q (manifest removed)",
   "feature.deleted_pruned": "Deleted super-feature %q (manifest removed) + branches pruned",
-  "err.usage_sf_create": "usage: workwood sf create <name> [description]",
+  "err.usage_sf_create": "usage: workwood sf create <name> [description] [--shorthand <ref>]",
   "err.usage_sf_add": "usage: workwood sf add <name> <repo> <worktree-branch-name> [--from <source>]",
   "err.usage_sf_up": "usage: workwood sf up <name>",
   "err.usage_sf_status": "usage: workwood sf status <name>",
@@ -214,5 +214,13 @@
   "tui.repos.checked_out": "%s → checked out %s",
   "tui.repos.checkout_failed": "checkout %q failed: %s",
   "tui.repos.default_set": "%s default branch → %s (not cloned yet)",
-  "tui.repos.diverged": "⚠ default is %s"
+  "tui.repos.diverged": "⚠ default is %s",
+  "tui.form.shorthand": "Shorthand",
+  "tui.form.shorthand_desc": "branch prefix for this feature (blank = initials of the name)",
+  "tui.repos.sync_uptodate": "up to date",
+  "tui.repos.sync_behind": "↓ %d behind origin",
+  "tui.repos.sync_ahead": "↑ %d ahead",
+  "tui.repos.sync_diverged": "↕ %d ahead, %d behind",
+  "tui.repos.sync_no_upstream": "no upstream",
+  "tui.menu.out_of_sync": "⚠ behind origin: %s — open Edit project, press p to fetch+pull (optional)"
 }

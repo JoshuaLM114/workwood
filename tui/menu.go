@@ -71,6 +71,9 @@ func (mm menuModel) View(m *Model) string {
 			b.WriteString("  " + title + "  " + dimStyle.Render(desc) + "\n")
 		}
 	}
+	if m.syncWarning != "" {
+		b.WriteString("\n" + warnStyle.Render(m.syncWarning) + "\n")
+	}
 	b.WriteString("\n" + helpStyle.Render(i18n.T("tui.menu.help")))
 	return docStyle.Render(b.String())
 }

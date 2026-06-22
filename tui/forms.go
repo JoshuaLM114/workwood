@@ -6,6 +6,7 @@ import (
 
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
+	"github.com/JoshuaLM114/workwood/manifest"
 	"github.com/charmbracelet/huh"
 )
 
@@ -25,8 +26,9 @@ func required(s string) error {
 
 // createVals holds the new-feature form bindings.
 type createVals struct {
-	name string
-	desc string
+	name      string
+	shorthand string
+	desc      string
 }
 
 // newCreateForm builds the "create a new super-feature" form. The name must be
@@ -50,6 +52,21 @@ func newCreateForm(cfg *config.Config, v *createVals) *huh.Form {
 					}
 					if _, err := os.Stat(cfg.ManifestPath(s)); err == nil {
 						return i18n.Err("tui.form.name_exists")
+					}
+					return nil
+				}),
+			// The shorthand is the worktree branch prefix. Its placeholder shows the
+			// auto-derived initials (live, as the name is typed); leaving it blank
+			// accepts that default.
+			huh.NewInput().
+				Key("shorthand").
+				Title(i18n.T("tui.form.shorthand")).
+				Description(i18n.T("tui.form.shorthand_desc")).
+				PlaceholderFunc(func() string { return manifest.DefaultShorthand(strings.TrimSpace(v.name)) }, &v.name).
+				Value(&v.shorthand).
+				Validate(func(s string) error {
+					if strings.ContainsAny(strings.TrimSpace(s), " \t/") {
+						return i18n.Err("tui.form.no_spaces")
 					}
 					return nil
 				}),

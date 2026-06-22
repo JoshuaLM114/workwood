@@ -98,22 +98,22 @@ func RunAction(cfg *config.Config, slug, name string, override targetcfg.Set) er
 }
 
 // ResolveBranch builds the full git branch for a worktree-branch-name. The real
-// branch is <feature>/<sub>; if the caller already typed that prefix it isn't
-// doubled. sub may itself contain slashes (fix/login).
-func ResolveBranch(feature, sub string) string {
-	return ResolveBranchWith(feature, sub, false)
+// branch is <prefix>/<sub> (prefix = the feature's shorthand); if the caller
+// already typed that prefix it isn't doubled. sub may contain slashes (fix/login).
+func ResolveBranch(prefix, sub string) string {
+	return ResolveBranchWith(prefix, sub, false)
 }
 
-// ResolveBranchWith is ResolveBranch with an override: when omitFeature is true
-// the <feature>/ prefix is dropped, so the branch is the raw <sub>.
-func ResolveBranchWith(feature, sub string, omitFeature bool) string {
-	if omitFeature {
+// ResolveBranchWith is ResolveBranch with an override: when omitPrefix is true the
+// <prefix>/ is dropped, so the branch is the raw <sub> (a standalone branch).
+func ResolveBranchWith(prefix, sub string, omitPrefix bool) string {
+	if omitPrefix {
 		return sub
 	}
-	if sub == feature || strings.HasPrefix(sub, feature+"/") {
+	if sub == prefix || strings.HasPrefix(sub, prefix+"/") {
 		return sub
 	}
-	return feature + "/" + sub
+	return prefix + "/" + sub
 }
 
 // Create writes a starter manifest for a new super-feature: it mints the feature
@@ -121,7 +121,7 @@ func ResolveBranchWith(feature, sub string, omitFeature bool) string {
 // (active_name defaulting to the slug). It refuses to clobber an existing feature,
 // and refuses to create one until the project's base repos are real clones (so
 // worktrees can actually be cut from them).
-func Create(cfg *config.Config, slug, desc string) error {
+func Create(cfg *config.Config, slug, shorthand, desc string) error {
 	if err := CheckReposReady(cfg); err != nil {
 		return err
 	}
@@ -132,10 +132,15 @@ func Create(cfg *config.Config, slug, desc string) error {
 	if err := os.MkdirAll(cfg.FeatureDir(slug), 0o755); err != nil {
 		return err
 	}
+	shorthand = strings.TrimSpace(shorthand)
+	if shorthand == "" {
+		shorthand = manifest.DefaultShorthand(slug)
+	}
 	m := &manifest.Manifest{
 		ID:          uuid.NewString(),
 		Project:     cfg.ProjectID,
 		Feature:     slug,
+		Shorthand:   shorthand,
 		Description: desc,
 		Created:     time.Now().Format("2006-01-02"),
 		Worktrees:   []manifest.Worktree{},
@@ -185,7 +190,7 @@ func Add(cfg *config.Config, pd *projectdef.File, name string, spec AddSpec) (ma
 // ref-hierarchy guard, attach-to-existing precedence, and directory-collision
 // suffixing.
 func provision(cfg *config.Config, pd *projectdef.File, m *manifest.Manifest, spec AddSpec) (manifest.Worktree, error) {
-	branch := ResolveBranchWith(m.Feature, spec.Sub, spec.OmitFeaturePrefix)
+	branch := ResolveBranchWith(m.BranchPrefix(), spec.Sub, spec.OmitFeaturePrefix)
 	baseRepo := cfg.BaseRepo(spec.Repo)
 	if !gitx.IsRepo(baseRepo) {
 		return manifest.Worktree{}, i18n.Err("err.base_repo_missing", baseRepo)
@@ -264,8 +269,8 @@ func allocPath(cfg *config.Config, m *manifest.Manifest, repo, branch string) st
 	dir := repo
 	if dirTaken(cfg, m, m.Feature+"/"+dir) {
 		// On a 2nd worktree of the same repo, suffix the dir with the branch's
-		// sub-name (the part after <feature>/) so the folders stay distinct.
-		sub := strings.TrimPrefix(branch, m.Feature+"/")
+		// sub-name (the part after the branch prefix) so the folders stay distinct.
+		sub := strings.TrimPrefix(branch, m.BranchPrefix()+"/")
 		dir = repo + "--" + slugify(sub)
 	}
 	return m.Feature + "/" + dir
@@ -394,7 +399,7 @@ func Remove(cfg *config.Config, name string, spec RemoveSpec) (string, error) {
 
 	want := ""
 	if spec.Sub != "" {
-		want = ResolveBranch(name, spec.Sub)
+		want = ResolveBranch(m.BranchPrefix(), spec.Sub)
 	}
 
 	var matches []manifest.Worktree
@@ -420,7 +425,7 @@ func Remove(cfg *config.Config, name string, spec RemoveSpec) (string, error) {
 		var b strings.Builder
 		b.WriteString(i18n.T("err.multiple_worktrees", spec.Repo, name))
 		for _, w := range matches {
-			b.WriteString(i18n.T("err.multiple_worktrees_row", strings.TrimPrefix(w.Branch, name+"/"), w.Branch))
+			b.WriteString(i18n.T("err.multiple_worktrees_row", strings.TrimPrefix(w.Branch, m.BranchPrefix()+"/"), w.Branch))
 		}
 		return "", errors.New(b.String())
 	}
@@ -537,7 +542,7 @@ func ApplyEdit(cfg *config.Config, pd *projectdef.File, name, description string
 	for _, rm := range removes {
 		branch := rm.Branch
 		if branch == "" {
-			branch = ResolveBranch(name, rm.Sub)
+			branch = ResolveBranch(m.BranchPrefix(), rm.Sub)
 		}
 		idx := m.Find(rm.Repo, branch)
 		if idx < 0 {

@@ -9,7 +9,62 @@ import (
 
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/manifest"
+	"github.com/JoshuaLM114/workwood/projectdef"
 )
+
+// TestCreateUsesShorthandForBranch proves the shorthand becomes the worktree
+// branch prefix: creating "my-new-super-feature" defaults the shorthand to "mnsf",
+// and an added worktree gets a branch like "mnsf/api".
+func TestCreateUsesShorthandForBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+
+	// A real base clone (CheckReposReady requires it) on main.
+	mainDir := filepath.Join(root, "main")
+	mk(t, filepath.Join(mainDir, "svc"))
+	git(t, filepath.Join(mainDir, "svc"), "init", "-q", "-b", "main")
+	git(t, filepath.Join(mainDir, "svc"), "commit", "-q", "--allow-empty", "-m", "init")
+
+	repoRoot := filepath.Join(root, "super")
+	mk(t, repoRoot)
+	pdFile := filepath.Join(repoRoot, "workwood.yml")
+	if err := os.WriteFile(pdFile, []byte("name: demo\norg: o\nrepos:\n  - name: svc\n    default_branch: main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Root:         repoRoot,
+		ProjectDef:   pdFile,
+		MainDir:      mainDir,
+		FeaturesDir:  filepath.Join(root, "features"),
+		ManifestsDir: filepath.Join(root, "manifests"),
+		StateFile:    filepath.Join(root, "state.yml"),
+	}
+
+	if err := Create(cfg, "my-new-super-feature", "", "demo"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	m, err := manifest.Load(cfg.ManifestPath("my-new-super-feature"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Shorthand != "mnsf" {
+		t.Fatalf("shorthand = %q, want mnsf", m.Shorthand)
+	}
+
+	pd, err := projectdef.Load(pdFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := Add(cfg, pd, "my-new-super-feature", AddSpec{Repo: "svc", Sub: "api"})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if wt.Branch != "mnsf/api" {
+		t.Fatalf("branch = %q, want mnsf/api", wt.Branch)
+	}
+}
 
 // git runs a git command in dir, failing the test on error.
 func git(t *testing.T, dir string, args ...string) {

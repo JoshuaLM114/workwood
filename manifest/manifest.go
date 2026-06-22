@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/version"
@@ -30,14 +31,46 @@ type Worktree struct {
 // key/values handed to plugins via the context (e.g. a deploy plugin's
 // namespace) — workwood itself never interprets them, keeping core unopinionated.
 type Manifest struct {
-	Version     int               `yaml:"version"`           // on-disk schema version (see version pkg)
-	ID          string            `yaml:"id,omitempty"`      // super-feature UUID (committed; identity)
-	Project     string            `yaml:"project,omitempty"` // parent project UUID (links back to workwood.yml id)
-	Feature     string            `yaml:"feature"`           // original_name / slug: filename stem + branch prefix
+	Version     int               `yaml:"version"`             // on-disk schema version (see version pkg)
+	ID          string            `yaml:"id,omitempty"`        // super-feature UUID (committed; identity)
+	Project     string            `yaml:"project,omitempty"`   // parent project UUID (links back to workwood.yml id)
+	Feature     string            `yaml:"feature"`             // original_name / slug: filename stem
+	Shorthand   string            `yaml:"shorthand,omitempty"` // short branch prefix (e.g. mnsf for my-new-super-feature)
 	Description string            `yaml:"description"`
 	Created     string            `yaml:"created"`
 	Vars        map[string]string `yaml:"vars,omitempty"`
 	Worktrees   []Worktree        `yaml:"worktrees"`
+}
+
+// BranchPrefix is the prefix this feature's worktree branches use: the shorthand,
+// or the feature name as a fallback for manifests written before shorthands
+// existed. Committing the shorthand lets a teammate map a branch like `mnsf/api`
+// back to the super-feature.
+func (m *Manifest) BranchPrefix() string {
+	if m.Shorthand != "" {
+		return m.Shorthand
+	}
+	return m.Feature
+}
+
+// DefaultShorthand derives a branch prefix from a feature name: the first letter
+// of each '-' / '_' / space-separated word, lowercased
+// (my-new-super-feature → mnsf). A name with no separators yields its first letter.
+func DefaultShorthand(name string) string {
+	fields := strings.FieldsFunc(name, func(r rune) bool {
+		return r == '-' || r == '_' || r == ' '
+	})
+	var b strings.Builder
+	for _, f := range fields {
+		rs := []rune(f)
+		if len(rs) > 0 {
+			b.WriteRune(unicode.ToLower(rs[0]))
+		}
+	}
+	if b.Len() == 0 {
+		return name
+	}
+	return b.String()
 }
 
 // Load reads and parses a manifest, normalising worktree paths for back-compat.

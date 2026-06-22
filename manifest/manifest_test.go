@@ -71,6 +71,30 @@ func TestLoadBackCompatNoUUID(t *testing.T) {
 	}
 }
 
+func TestDefaultShorthand(t *testing.T) {
+	cases := map[string]string{
+		"my-new-super-feature": "mnsf",
+		"add_login_flow":       "alf",
+		"two words":            "tw",
+		"voice":                "v", // single word → its first letter
+		"":                     "",
+	}
+	for in, want := range cases {
+		if got := DefaultShorthand(in); got != want {
+			t.Errorf("DefaultShorthand(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestBranchPrefix(t *testing.T) {
+	if got := (&Manifest{Feature: "voice", Shorthand: "v"}).BranchPrefix(); got != "v" {
+		t.Errorf("with shorthand: got %q, want v", got)
+	}
+	if got := (&Manifest{Feature: "voice"}).BranchPrefix(); got != "voice" {
+		t.Errorf("no shorthand: got %q, want voice (fallback to feature)", got)
+	}
+}
+
 func TestNormPathStripsLegacyPrefix(t *testing.T) {
 	if got := NormPath("features/voice/api"); got != "voice/api" {
 		t.Errorf("NormPath = %q, want voice/api", got)

@@ -22,7 +22,7 @@
   "err.unknown_repos_sub": "不明な repos サブコマンド: %s",
   "feature.none": "super-feature がまだありません。作成: workwood sf create <name>",
   "feature.list_meta": "worktree %2d 個  %s",
-  "feature.created": "super-feature マニフェストを作成しました: %s",
+  "feature.created": "super-feature マニフェストを作成しました: %s（shorthand: %s）",
   "feature.add_hint": "作業を追加: workwood sf add %s <repo> <worktree-branch-name> [--from <source>]   （branch = %s/<worktree-branch-name>）",
   "feature.added": "追加しました %s @ %s -> %s",
   "feature.status_header": "super-feature: %s",
@@ -32,7 +32,7 @@
   "feature.down_done": "%q の worktree を削除しました（マニフェストは保持）",
   "feature.deleted": "super-feature %q を削除しました（マニフェストを削除）",
   "feature.deleted_pruned": "super-feature %q を削除しました（マニフェストを削除）+ ブランチも削除",
-  "err.usage_sf_create": "使い方: workwood sf create <name> [description]",
+  "err.usage_sf_create": "使い方: workwood sf create <name> [description] [--shorthand <ref>]",
   "err.usage_sf_add": "使い方: workwood sf add <name> <repo> <worktree-branch-name> [--from <source>]",
   "err.usage_sf_up": "使い方: workwood sf up <name>",
   "err.usage_sf_status": "使い方: workwood sf status <name>",
@@ -214,5 +214,13 @@
   "tui.repos.checked_out": "%s → %s をチェックアウトしました",
   "tui.repos.checkout_failed": "%q のチェックアウトに失敗: %s",
   "tui.repos.default_set": "%s のデフォルトブランチ → %s（未クローン）",
-  "tui.repos.diverged": "⚠ デフォルトは %s"
+  "tui.repos.diverged": "⚠ デフォルトは %s",
+  "tui.form.shorthand": "ショートハンド",
+  "tui.form.shorthand_desc": "この feature のブランチ接頭辞（空欄 = 名前の頭文字）",
+  "tui.repos.sync_uptodate": "最新",
+  "tui.repos.sync_behind": "↓ origin より %d 遅れ",
+  "tui.repos.sync_ahead": "↑ %d 先行",
+  "tui.repos.sync_diverged": "↕ %d 先行, %d 遅れ",
+  "tui.repos.sync_no_upstream": "上流なし",
+  "tui.menu.out_of_sync": "⚠ origin より遅れ: %s — Edit project を開き p で取得+プル（任意）"
 }

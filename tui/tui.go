@@ -8,10 +8,12 @@ package tui
 
 import (
 	"os"
+	"strings"
 
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/projectdef"
+	"github.com/JoshuaLM114/workwood/repos"
 	"github.com/JoshuaLM114/workwood/superfeature"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -93,6 +95,21 @@ type Model struct {
 
 	width, height int
 	err           error
+	syncWarning   string // set on boot when ref repos are behind origin
+}
+
+// bootSyncMsg carries the names of ref repos found behind origin after the
+// on-boot fetch.
+type bootSyncMsg struct{ outOfSync []string }
+
+// bootFetchCmd fetches the ref repos in the background on launch (read-only — it
+// never pulls or touches the working tree), then reports any that are behind.
+func (m *Model) bootFetchCmd() tea.Cmd {
+	cfg, pd := m.cfg, m.pd
+	return func() tea.Msg {
+		repos.FetchAll(cfg, pd)
+		return bootSyncMsg{outOfSync: repos.OutOfSync(cfg, pd)}
+	}
 }
 
 // Run starts the TUI for an already-resolved project at the root menu.
@@ -102,7 +119,7 @@ func Run(cfg *config.Config, pd *projectdef.File) error {
 	return err
 }
 
-func (m *Model) Init() tea.Cmd { return nil }
+func (m *Model) Init() tea.Cmd { return m.bootFetchCmd() }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -120,6 +137,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.repos != nil {
 			m.repos.setSize(hw, hh)
+		}
+		return m, nil
+
+	case bootSyncMsg:
+		if len(msg.outOfSync) > 0 {
+			m.syncWarning = i18n.T("tui.menu.out_of_sync", strings.Join(msg.outOfSync, ", "))
 		}
 		return m, nil
 
@@ -275,7 +298,7 @@ func (m *Model) updateCreate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.createForm.State {
 	case huh.StateCompleted:
 		name := m.createVals.name
-		if err := superfeature.Create(m.cfg, name, m.createVals.desc); err != nil {
+		if err := superfeature.Create(m.cfg, name, m.createVals.shorthand, m.createVals.desc); err != nil {
 			m.err = err
 			m.screen = screenFeatures
 			return m, nil

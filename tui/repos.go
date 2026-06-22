@@ -24,17 +24,40 @@ type reposDoneMsg struct {
 	err error
 }
 
-// repoRow is one base repo plus its on-disk clone state and active branch.
+// repoRow is one base repo plus its on-disk clone state, active branch, and sync
+// position relative to origin.
 type repoRow struct {
 	name   string
 	branch string // configured default branch (workwood.yml)
 	active string // branch actually checked out in the base clone ("" if N/A)
 	state  repos.CloneState
+	sync   repos.SyncInfo
 }
 
 // diverged reports whether the clone is on a different branch than configured.
 func (row repoRow) diverged() bool {
 	return row.state == repos.StateClone && row.active != "" && row.active != row.branch
+}
+
+// statusText is the last column: the clone-state label for non-clones, else the
+// sync position relative to origin (refreshed by the on-boot fetch).
+func (row repoRow) statusText() string {
+	if row.state != repos.StateClone {
+		return stateLabel(row.state)
+	}
+	s := row.sync
+	switch {
+	case !s.HasUpstream:
+		return i18n.T("tui.repos.sync_no_upstream")
+	case s.Behind > 0 && s.Ahead > 0:
+		return i18n.T("tui.repos.sync_diverged", s.Ahead, s.Behind)
+	case s.Behind > 0:
+		return i18n.T("tui.repos.sync_behind", s.Behind)
+	case s.Ahead > 0:
+		return i18n.T("tui.repos.sync_ahead", s.Ahead)
+	default:
+		return i18n.T("tui.repos.sync_uptodate")
+	}
 }
 
 // reposModel is the "Edit project" screen: add/remove the base repos in the
@@ -70,6 +93,7 @@ func (r *reposModel) rebuild() {
 			branch: repo.DefaultBranch,
 			active: repos.ActiveBranch(base),
 			state:  repos.ClassifyClone(base),
+			sync:   repos.AheadBehind(base),
 		})
 	}
 	if r.cursor >= len(r.rows) {
@@ -290,13 +314,19 @@ func (r *reposModel) View() string {
 			if row.state != repos.StateClone {
 				marker = "✗"
 			}
-			line := fmt.Sprintf("%s %-18s %-16s %-16s %s",
-				marker, pad(row.name, 18), pad(orDash(row.branch), 16), pad(orDash(row.active), 16), stateLabel(row.state))
+			prefix := fmt.Sprintf("%s %-18s %-16s %-16s ",
+				marker, pad(row.name, 18), pad(orDash(row.branch), 16), pad(orDash(row.active), 16))
+			status := row.statusText()
+			var line string
 			switch {
 			case i == r.cursor:
-				line = selectedRowStyle.Render(line)
+				line = selectedRowStyle.Render(prefix + status)
 			case row.state != repos.StateClone:
-				line = errStyle.Render(line) // not a real clone → red
+				line = errStyle.Render(prefix + status) // not a real clone → red
+			case row.sync.OutOfSync():
+				line = prefix + warnStyle.Render(status) // behind origin → amber
+			default:
+				line = prefix + status
 			}
 			// Flag a clone that's on a different branch than configured.
 			if row.diverged() {

@@ -304,7 +304,7 @@ func (e *editorModel) syncTable() {
 
 func (e *editorModel) openAddForm() {
 	e.addVals = addVals{}
-	e.form = newAddForm(e.m.pd.Names(), e.name, &e.addVals).WithWidth(min(72, e.width-2))
+	e.form = newAddForm(e.m.pd.Names(), e.man.BranchPrefix(), &e.addVals).WithWidth(min(72, e.width-2))
 	e.formMode = formAdd
 }
 
@@ -347,7 +347,7 @@ func (e *editorModel) onFormDone() {
 		e.rows = append(e.rows, editorRow{
 			kind:      rowStagedAdd,
 			add:       add,
-			addBranch: superfeature.ResolveBranchWith(e.name, sub, add.OmitFeaturePrefix),
+			addBranch: superfeature.ResolveBranchWith(e.man.BranchPrefix(), sub, add.OmitFeaturePrefix),
 		})
 		e.syncTable()
 		e.status = i18n.T("tui.status.staged_add")

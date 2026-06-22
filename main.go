@@ -312,7 +312,6 @@ func ensureDef(root string) (*projectdef.File, bool, error) {
 		pd := &projectdef.File{
 			ID:    uuid.NewString(),
 			Name:  filepath.Base(root),
-			Org:   "CHANGE_ME",
 			Repos: []projectdef.Repo{},
 		}
 		if err := projectdef.Save(defPath, pd); err != nil {

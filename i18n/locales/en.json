@@ -181,8 +181,8 @@
   "tui.repos.form_name": "Repo name",
   "tui.repos.form_name_desc": "directory name under main_dir and the repo's name",
   "tui.repos.form_branch": "Default branch",
-  "tui.repos.form_url": "URL (optional)",
-  "tui.repos.form_url_desc": "overrides <org>/<name> (e.g. another-org/repo or a full URL)",
+  "tui.repos.form_url": "URL",
+  "tui.repos.form_url_desc": "git URL to clone from, e.g. git@github.com:you/repo.git",
   "repos.fetched": "fetched %s",
   "repos.cloned": "cloned %s (%s)",
   "tui.repos.col_status": "Status",
@@ -222,5 +222,8 @@
   "tui.repos.sync_ahead": "↑ %d ahead",
   "tui.repos.sync_diverged": "↕ %d ahead, %d behind",
   "tui.repos.sync_no_upstream": "no upstream",
-  "tui.menu.out_of_sync": "⚠ behind origin: %s — open Edit project, press p to fetch+pull (optional)"
+  "tui.menu.out_of_sync": "⚠ behind origin: %s — open Edit project, press p to fetch+pull (optional)",
+  "tui.repos.br_local": "local",
+  "tui.repos.br_remote": "remote",
+  "tui.repos.fetching_branches": "fetching branches for %s…"
 }

@@ -20,6 +20,61 @@ func gitIn(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func TestRemoteBranchesFor(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	// git ls-remote works against a local path, so the temp repo IS the "URL".
+	remote := t.TempDir()
+	gitIn(t, remote, "init", "-q", "-b", "main")
+	gitIn(t, remote, "commit", "-q", "--allow-empty", "-m", "A")
+	gitIn(t, remote, "branch", "feature/x")
+
+	got := map[string]bool{}
+	for _, b := range RemoteBranchesFor(remote) {
+		got[b.Name] = b.Remote
+	}
+	if !got["main"] || !got["feature/x"] {
+		t.Errorf("RemoteBranchesFor = %v, want main + feature/x (Remote)", got)
+	}
+	// Empty / bad URL → nil (callers fall back to free text), never a panic.
+	if RemoteBranchesFor("") != nil {
+		t.Error("empty URL should yield nil")
+	}
+}
+
+func TestBranches(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+	up := filepath.Join(root, "up")
+	mustMkdir(t, up)
+	gitIn(t, up, "init", "-q", "-b", "main")
+	gitIn(t, up, "commit", "-q", "--allow-empty", "-m", "A")
+	gitIn(t, up, "branch", "feature/r") // remote-only after clone
+
+	base := filepath.Join(root, "svc")
+	if out, err := exec.Command("git", "clone", "-q", up, base).CombinedOutput(); err != nil {
+		t.Fatalf("clone: %v\n%s", err, out)
+	}
+	gitIn(t, base, "branch", "local-only") // local-only
+
+	got := map[string]BranchRef{}
+	for _, b := range Branches(base) {
+		got[b.Name] = b
+	}
+	if b := got["main"]; !b.Local || !b.Remote {
+		t.Errorf("main: %+v, want local+remote", b)
+	}
+	if b := got["feature/r"]; b.Local || !b.Remote {
+		t.Errorf("feature/r: %+v, want remote-only", b)
+	}
+	if b := got["local-only"]; !b.Local || b.Remote {
+		t.Errorf("local-only: %+v, want local-only", b)
+	}
+}
+
 func TestAheadBehindAndOutOfSync(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

@@ -11,11 +11,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Repo is one base repo entry.
+// Repo is one base repo entry. URL is the clone source (a full git/gh URL); the
+// tool derives nothing — what you put here is what it clones.
 type Repo struct {
-	Name          string `yaml:"name"`
-	DefaultBranch string `yaml:"default_branch"`
-	URL           string `yaml:"url,omitempty"` // optional; overrides <host>/<org>/<name>
+	Name          string `yaml:"name"`           // local dir name + manifest key
+	DefaultBranch string `yaml:"default_branch"` // branch to park the base clone on
+	URL           string `yaml:"url"`            // required: where to clone from
 }
 
 // File is the parsed workwood.yml — the committed project definition at the
@@ -25,8 +26,6 @@ type Repo struct {
 type File struct {
 	ID    string `yaml:"id,omitempty"`   // project UUID (committed; identity)
 	Name  string `yaml:"name,omitempty"` // original_name — canonical label, immutable
-	Org   string `yaml:"org"`
-	Host  string `yaml:"host,omitempty"` // optional git host (default: github.com via gh)
 	Repos []Repo `yaml:"repos"`
 }
 
@@ -61,15 +60,6 @@ func Save(path string, f *File) error {
 	}
 	enc.Close()
 	return os.WriteFile(path, []byte(buf.String()), 0o644)
-}
-
-// Slug returns the clone target for a repo: its explicit URL if set, else
-// <org>/<name> (which `gh repo clone` resolves against github.com).
-func (f *File) Slug(r Repo) string {
-	if r.URL != "" {
-		return r.URL
-	}
-	return f.Org + "/" + r.Name
 }
 
 // DefaultBranch returns the configured default branch for repo name, or "" if

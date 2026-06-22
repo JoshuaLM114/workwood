@@ -14,15 +14,20 @@ import (
 type reposFormMode int
 
 const (
-	rfNone reposFormMode = iota
-	rfAdd
-	rfEditBranch
+	rfNone       reposFormMode = iota
+	rfAdd                      // step 1: repo name + url
+	rfAddBranch                // step 2: pick the default branch (remote branches fetched)
+	rfEditBranch               // edit an existing repo's default branch
 )
 
 type reposDoneMsg struct {
 	log []string
 	err error
 }
+
+// addBranchesMsg carries the remote branches fetched for a repo being added (nil
+// if listing failed — step 2 then falls back to a free-text branch entry).
+type addBranchesMsg struct{ branches []repos.BranchRef }
 
 // repoRow is one base repo plus its on-disk clone state, active branch, and sync
 // position relative to origin.
@@ -124,7 +129,7 @@ func (r *reposModel) Update(msg tea.Msg) (*reposModel, tea.Cmd) {
 			r.form = f
 		}
 		if r.form.State == huh.StateCompleted {
-			r.onFormDone()
+			return r, r.onFormDone() // may kick off the step-2 branch fetch
 		} else if r.form.State == huh.StateAborted {
 			r.form = nil
 			r.formMode = rfNone
@@ -133,6 +138,15 @@ func (r *reposModel) Update(msg tea.Msg) (*reposModel, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case addBranchesMsg:
+		// Step 1 finished and branches are in → open step 2 (branch picker), or a
+		// free-text fallback when listing came back empty.
+		r.busy = false
+		r.branchVals = branchVals{branch: "main"}
+		r.form = newEditBranchForm(msg.branches, &r.branchVals).WithWidth(min(72, r.width-2))
+		r.formMode = rfAddBranch
+		return r, r.form.Init()
+
 	case reposDoneMsg:
 		r.busy = false
 		r.rebuild()
@@ -164,14 +178,16 @@ func (r *reposModel) Update(msg tea.Msg) (*reposModel, tea.Cmd) {
 				r.cursor++
 			}
 		case "a":
-			r.repoVals = repoVals{branch: "main"}
+			r.repoVals = repoVals{}
 			r.form = newAddRepoForm(&r.repoVals).WithWidth(min(72, r.width-2))
 			r.formMode = rfAdd
 			return r, r.form.Init()
 		case "e":
 			if r.cursor >= 0 && r.cursor < len(r.m.pd.Repos) {
-				r.branchVals = branchVals{branch: r.m.pd.Repos[r.cursor].DefaultBranch}
-				r.form = newEditBranchForm(&r.branchVals).WithWidth(min(72, r.width-2))
+				repo := r.m.pd.Repos[r.cursor]
+				r.branchVals = branchVals{branch: repo.DefaultBranch}
+				branches := repos.Branches(r.m.cfg.BaseRepo(repo.Name))
+				r.form = newEditBranchForm(branches, &r.branchVals).WithWidth(min(72, r.width-2))
 				r.formMode = rfEditBranch
 				return r, r.form.Init()
 			}
@@ -196,29 +212,52 @@ func (r *reposModel) syncCmd() tea.Cmd {
 	}
 }
 
-func (r *reposModel) onFormDone() {
+// onFormDone handles a completed form and returns any follow-up command. rfAdd
+// (step 1) doesn't create the repo — it validates the name, then fetches the
+// remote's branches so step 2 can offer a branch dropdown.
+func (r *reposModel) onFormDone() tea.Cmd {
 	switch r.formMode {
 	case rfAdd:
+		return r.beginAdd()
+	case rfAddBranch:
 		r.addRepo()
 	case rfEditBranch:
 		r.editBranch()
 	}
 	r.form = nil
 	r.formMode = rfNone
+	return nil
 }
 
+// beginAdd validates the new repo name then kicks off the remote-branch fetch.
+func (r *reposModel) beginAdd() tea.Cmd {
+	r.form = nil
+	r.formMode = rfNone
+	name := strings.TrimSpace(r.repoVals.name)
+	if name == "" {
+		return nil
+	}
+	for _, e := range r.m.pd.Repos {
+		if e.Name == name {
+			r.status = errStyle.Render(i18n.T("tui.repos.exists", name))
+			return nil
+		}
+	}
+	r.busy = true
+	r.status = i18n.T("tui.repos.fetching_branches", name)
+	url := strings.TrimSpace(r.repoVals.url)
+	return func() tea.Msg {
+		return addBranchesMsg{branches: repos.RemoteBranchesFor(url)}
+	}
+}
+
+// addRepo (step 2) appends the repo with the chosen default branch.
 func (r *reposModel) addRepo() {
 	name := strings.TrimSpace(r.repoVals.name)
 	if name == "" {
 		return
 	}
-	for _, e := range r.m.pd.Repos {
-		if e.Name == name {
-			r.status = errStyle.Render(i18n.T("tui.repos.exists", name))
-			return
-		}
-	}
-	branch := strings.TrimSpace(r.repoVals.branch)
+	branch := strings.TrimSpace(r.branchVals.branch)
 	if branch == "" {
 		branch = "main"
 	}
@@ -294,7 +333,7 @@ func stateLabel(s repos.CloneState) string {
 func (r *reposModel) View() string {
 	if r.form != nil {
 		title := i18n.T("tui.repos.add_title")
-		if r.formMode == rfEditBranch {
+		if r.formMode == rfEditBranch || r.formMode == rfAddBranch {
 			title = i18n.T("tui.repos.edit_branch_title")
 		}
 		return docStyle.Render(titleStyle.Render(title) + "\n\n" + r.form.View() + "\n" + helpStyle.Render(i18n.T("tui.form_help")))

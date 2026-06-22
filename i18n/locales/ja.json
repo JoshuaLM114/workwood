@@ -181,8 +181,8 @@
   "tui.repos.form_name": "repo 名",
   "tui.repos.form_name_desc": "main_dir 配下のディレクトリ名 / repo 名",
   "tui.repos.form_branch": "デフォルトブランチ",
-  "tui.repos.form_url": "URL（任意）",
-  "tui.repos.form_url_desc": "<org>/<name> を上書き（例: another-org/repo やフル URL）",
+  "tui.repos.form_url": "URL",
+  "tui.repos.form_url_desc": "クローン元の git URL（例: git@github.com:you/repo.git）",
   "repos.fetched": "%s を取得しました",
   "repos.cloned": "%s をクローンしました（%s）",
   "tui.repos.col_status": "状態",
@@ -222,5 +222,8 @@
   "tui.repos.sync_ahead": "↑ %d 先行",
   "tui.repos.sync_diverged": "↕ %d 先行, %d 遅れ",
   "tui.repos.sync_no_upstream": "上流なし",
-  "tui.menu.out_of_sync": "⚠ origin より遅れ: %s — Edit project を開き p で取得+プル（任意）"
+  "tui.menu.out_of_sync": "⚠ origin より遅れ: %s — Edit project を開き p で取得+プル（任意）",
+  "tui.repos.br_local": "ローカル",
+  "tui.repos.br_remote": "リモート",
+  "tui.repos.fetching_branches": "%s のブランチを取得中…"
 }

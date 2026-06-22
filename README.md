@@ -16,7 +16,7 @@ link, not as a path segment).
 
 | | Lives in | Owned by | Committed? |
 | --- | --- | --- | --- |
-| **Project definition** — `id` (UUID) + `name` + org + repo list | the super-repo root: `workwood.yml` | the team | yes |
+| **Project definition** — `id` (UUID) + `name` + repo list (each with a clone `url`) | the super-repo root: `workwood.yml` | the team | yes |
 | **Super-feature manifests** — `id` + parent `project` UUID + repos/branches/paths | the super-repo: `workwood/super-features/<slug>.yaml` | the team | yes |
 | **Actions** (`tmux`, `ssh`, …) | the super-repo: `workwood/actions/` | the team | yes |
 | **Your per-project state** — editable names, target working sets | `$WORKWOOD_DATA/workwood-state.yml` | you | no |
@@ -42,8 +42,9 @@ has a committed **shorthand** that prefixes its git branches (see Super-features
 ## Install
 
 workwood is distributed as source and built by the Go toolchain — there are no
-pre-built binaries, so installing requires **Go 1.25+** and **git** on PATH
-(plus `gh`, authenticated, for cloning base repos).
+pre-built binaries, so installing requires **Go 1.25+** and **git** on PATH. Base
+repos are cloned with plain `git clone <url>`, so whatever auth your git already
+uses (SSH keys, credential helper) is what workwood uses.
 
 **One-liner** (recommended) — compiles the latest tagged release and drops
 `workwood` in your Go bin dir:
@@ -125,9 +126,13 @@ Running `workwood` (no args) opens a root menu with three entries:
 
 - **Super-features** — the feature picker; create one, or open one to edit its
   worktrees (then `o` for its Actions screen).
-- **Edit project** — add/remove the base repos in `workwood.yml` (`a` add, `d`
-  remove), and `e` to set a repo's **default branch** (which checks the base clone
-  out to it, reporting any error). The table shows each repo's configured
+- **Edit project** — add/remove the base repos in `workwood.yml`. **`a` add** is
+  two steps: enter the repo name + its clone **URL** (required — workwood clones
+  exactly that, deriving nothing), then pick its **default branch** from a dropdown
+  of the remote's branches (read via `git ls-remote <url>`; falls back to free text
+  if listing fails). **`e`** re-picks an existing repo's default branch — a
+  dropdown of the clone's local/remote branches (each tagged `local` / `remote` /
+  both) — and checks the base clone out to it (reporting any error). `d` removes. The table shows each repo's configured
   **Default** branch next to the **Active** branch actually checked out under
   `main_dir` — a mismatch is flagged (⚠) so divergences are obvious. The last
   column shows each clone's **sync position** relative to origin
@@ -335,7 +340,7 @@ content are not translated.
 | `config/` | locate the super-repo, resolve app settings + the data dir, and load `workwood-state.yml` (`config.go`, `state.go`) |
 | `projectdef/` | parse/scaffold a super-repo's `workwood.yml` (id + name + repos) |
 | `manifest/` | load/save super-feature manifests (id + parent project) |
-| `gitx/` | thin wrappers over the `git` / `gh` CLIs |
+| `gitx/` | thin wrappers over the `git` CLI |
 | `targetcfg/` | the target working set + presets + candidate tree (`.workwood/targets.yml` expansion) |
 | `action/` | write the targets `context.yml` → exec an action from `workwood/actions` |
 | `superfeature/` | create/add/up/down/remove/status/list/rename + run-action |

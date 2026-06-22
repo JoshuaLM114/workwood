@@ -30,7 +30,7 @@ func TestCreateUsesShorthandForBranch(t *testing.T) {
 	repoRoot := filepath.Join(root, "super")
 	mk(t, repoRoot)
 	pdFile := filepath.Join(repoRoot, "workwood.yml")
-	if err := os.WriteFile(pdFile, []byte("name: demo\norg: o\nrepos:\n  - name: svc\n    default_branch: main\n"), 0o644); err != nil {
+	if err := os.WriteFile(pdFile, []byte("name: demo\nrepos:\n  - name: svc\n    default_branch: main\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{

@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/manifest"
+	"github.com/JoshuaLM114/workwood/repos"
 	"github.com/charmbracelet/huh"
 )
 
@@ -214,16 +216,14 @@ func newSavePresetForm(v *nameVals) *huh.Form {
 
 // repoVals binds the add-repo form (a base repo in workwood.yml).
 type repoVals struct {
-	name   string
-	branch string
-	url    string
+	name string
+	url  string
 }
 
-// newAddRepoForm builds the "add a base repo" form.
+// newAddRepoForm is step 1 of adding a repo: just the name (+ optional URL). The
+// default branch is chosen in step 2 once the name lets us list the remote's
+// branches — see newEditBranchForm, reused there.
 func newAddRepoForm(v *repoVals) *huh.Form {
-	if v.branch == "" {
-		v.branch = "main"
-	}
 	return form(
 		huh.NewGroup(
 			huh.NewInput().
@@ -242,14 +242,11 @@ func newAddRepoForm(v *repoVals) *huh.Form {
 					return nil
 				}),
 			huh.NewInput().
-				Key("branch").
-				Title(i18n.T("tui.repos.form_branch")).
-				Value(&v.branch),
-			huh.NewInput().
 				Key("url").
 				Title(i18n.T("tui.repos.form_url")).
 				Description(i18n.T("tui.repos.form_url_desc")).
-				Value(&v.url),
+				Value(&v.url).
+				Validate(required),
 		),
 	)
 }
@@ -258,18 +255,48 @@ func newAddRepoForm(v *repoVals) *huh.Form {
 type branchVals struct{ branch string }
 
 // newEditBranchForm edits a repo's default branch (which also checks the base
-// clone out to it).
-func newEditBranchForm(v *branchVals) *huh.Form {
+// clone out to it). When the clone's branches are known it's a dropdown of them,
+// each tagged local / remote / both; otherwise (repo not cloned yet) it falls back
+// to free text.
+func newEditBranchForm(branches []repos.BranchRef, v *branchVals) *huh.Form {
+	if len(branches) == 0 {
+		return form(
+			huh.NewGroup(
+				huh.NewInput().
+					Key("branch").
+					Title(i18n.T("tui.repos.form_branch")).
+					Description(i18n.T("tui.repos.edit_branch_desc")).
+					Value(&v.branch).
+					Validate(required),
+			),
+		)
+	}
+	opts := make([]huh.Option[string], 0, len(branches))
+	for _, b := range branches {
+		opts = append(opts, huh.NewOption(branchOptionLabel(b), b.Name))
+	}
 	return form(
 		huh.NewGroup(
-			huh.NewInput().
+			huh.NewSelect[string]().
 				Key("branch").
 				Title(i18n.T("tui.repos.form_branch")).
 				Description(i18n.T("tui.repos.edit_branch_desc")).
-				Value(&v.branch).
-				Validate(required),
+				Options(opts...).
+				Value(&v.branch),
 		),
 	)
+}
+
+// branchOptionLabel renders a branch with a small local/remote indicator.
+func branchOptionLabel(b repos.BranchRef) string {
+	var where []string
+	if b.Local {
+		where = append(where, i18n.T("tui.repos.br_local"))
+	}
+	if b.Remote {
+		where = append(where, i18n.T("tui.repos.br_remote"))
+	}
+	return fmt.Sprintf("%-28s (%s)", b.Name, strings.Join(where, "·"))
 }
 
 // selectVals binds a single-choice select form.

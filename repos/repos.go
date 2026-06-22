@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/gitx"
@@ -112,6 +113,59 @@ func ActiveBranch(dir string) string {
 // tracking origin/<branch> when there's no matching local branch.
 func Checkout(dir, branch string) error { return gitx.Checkout(dir, branch) }
 
+// BranchRef is a branch available in a base clone, with where it exists. A branch
+// can be both local and on origin (e.g. main).
+type BranchRef struct {
+	Name   string
+	Local  bool
+	Remote bool
+}
+
+// RemoteBranchesFor lists a not-yet-cloned repo's branches straight from its clone
+// URL, each marked Remote. Returns nil on any failure (offline, no auth, bad URL)
+// so callers fall back to free-text entry.
+func RemoteBranchesFor(url string) []BranchRef {
+	if url == "" {
+		return nil
+	}
+	names, err := gitx.LsRemoteHeads(url)
+	if err != nil {
+		return nil
+	}
+	out := make([]BranchRef, 0, len(names))
+	for _, n := range names {
+		out = append(out, BranchRef{Name: n, Remote: true})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// Branches lists the union of local and origin branches in a base clone, sorted,
+// each marked with where it exists. Empty when dir isn't a readable git repo.
+func Branches(dir string) []BranchRef {
+	byName := map[string]*BranchRef{}
+	if locals, err := gitx.LocalBranches(dir); err == nil {
+		for _, b := range locals {
+			byName[b] = &BranchRef{Name: b, Local: true}
+		}
+	}
+	if remotes, err := gitx.RemoteBranches(dir); err == nil {
+		for _, b := range remotes {
+			if r, ok := byName[b]; ok {
+				r.Remote = true
+			} else {
+				byName[b] = &BranchRef{Name: b, Remote: true}
+			}
+		}
+	}
+	out := make([]BranchRef, 0, len(byName))
+	for _, r := range byName {
+		out = append(out, *r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 // Sync clones missing repos and fetches existing ones (parking each on its default
 // branch, fast-forwarded). Unlike Pull it captures git/gh output and returns a log,
 // so the TUI can run it without corrupting the terminal. Returns the lines done.
@@ -128,11 +182,10 @@ func Sync(cfg *config.Config, pd *projectdef.File) ([]string, error) {
 			}
 			log = append(log, i18n.T("repos.fetched", r.Name))
 		} else {
-			slug := pd.Slug(r)
-			if err := gitx.CloneQuiet(slug, dest); err != nil {
+			if err := gitx.CloneQuiet(r.URL, dest); err != nil {
 				return log, err
 			}
-			log = append(log, i18n.T("repos.cloned", r.Name, slug))
+			log = append(log, i18n.T("repos.cloned", r.Name, r.URL))
 		}
 		if r.DefaultBranch != "" {
 			_ = gitx.Checkout(dest, r.DefaultBranch)
@@ -156,9 +209,8 @@ func Pull(cfg *config.Config, pd *projectdef.File) error {
 				return err
 			}
 		} else {
-			slug := pd.Slug(r)
-			fmt.Println(i18n.T("repos.cloning", r.Name, slug))
-			if err := gitx.Clone(slug, dest); err != nil {
+			fmt.Println(i18n.T("repos.cloning", r.Name, r.URL))
+			if err := gitx.Clone(r.URL, dest); err != nil {
 				return err
 			}
 		}

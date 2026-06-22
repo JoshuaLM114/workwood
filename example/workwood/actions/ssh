@@ -1,36 +1,43 @@
 #!/usr/bin/env bash
 # workwood-action: open a shell in a target
-# DEFAULT workwood ACTION — ssh. Pick one of the feature's selected targets and
-# drop into a shell there. Replace the final shell with your real connect command
-# (ssh, kubectl exec, port-forward) keyed off the target's path or a file in it —
-# workwood only hands you the paths; what "connect" means is up to you.
-#
-#   workwood action ssh <feature>
+# DEFAULT workwood ACTION — ssh. workwood SOURCES this file and calls Validate or
+# Run. Run picks one of the feature's selected targets and drops into a shell
+# there. Replace the final shell with your real connect command (ssh, kubectl
+# exec, port-forward) keyed off the target's path — workwood only hands you the
+# paths; what "connect" means is up to you.
 set -euo pipefail
-: "${WORKWOOD_TARGETS:?run via: workwood action ssh <feature>}"
 
-keys=(); paths=()
-while IFS= read -r line; do
-    key=${line%%:*}
-    path=${line#*: }
-    [ -n "$key" ] && [ "$key" != "$line" ] || continue
-    keys+=("$key"); paths+=("$path")
-done < "$WORKWOOD_TARGETS"
+# Validate: available when there's at least one "key: path" target.
+Validate() {
+    [ -s "${WORKWOOD_TARGETS:-}" ] || return 1
+    grep -q ': ' "$WORKWOOD_TARGETS"
+}
 
-[ "${#keys[@]}" -gt 0 ] || { echo "no targets selected for ${WORKWOOD_FEATURE:-?}" >&2; exit 1; }
+# Run: pick a target and drop into a shell in its directory.
+Run() {
+    local keys=() paths=()
+    while IFS= read -r line; do
+        key=${line%%:*}
+        path=${line#*: }
+        [ -n "$key" ] && [ "$key" != "$line" ] || continue
+        keys+=("$key"); paths+=("$path")
+    done < "$WORKWOOD_TARGETS"
 
-idx=0
-if [ "${#keys[@]}" -gt 1 ]; then
-    echo "Which target in '${WORKWOOD_FEATURE:-?}'?  (choose 'cancel' to back out)"
-    PS3="> "
-    select choice in "${keys[@]}" "cancel"; do
-        [ -n "${choice:-}" ] || { echo "pick a number" >&2; continue; }
-        [ "$choice" = "cancel" ] && { echo "cancelled"; exit 0; }
-        idx=$((REPLY - 1)); break
-    done
-fi
+    [ "${#keys[@]}" -gt 0 ] || { echo "no targets selected for ${WORKWOOD_FEATURE:-?}" >&2; return 1; }
 
-target="${keys[$idx]}"; dir="${paths[$idx]}"
-echo "== $target ($dir) =="
-cd "$dir"
-exec "${SHELL:-/bin/bash}"
+    local idx=0
+    if [ "${#keys[@]}" -gt 1 ]; then
+        echo "Which target in '${WORKWOOD_FEATURE:-?}'?  (choose 'cancel' to back out)"
+        PS3="> "
+        select choice in "${keys[@]}" "cancel"; do
+            [ -n "${choice:-}" ] || { echo "pick a number" >&2; continue; }
+            [ "$choice" = "cancel" ] && { echo "cancelled"; return 0; }
+            idx=$((REPLY - 1)); break
+        done
+    fi
+
+    local target="${keys[$idx]}" dir="${paths[$idx]}"
+    echo "== $target ($dir) =="
+    cd "$dir"
+    exec "${SHELL:-/bin/bash}"
+}

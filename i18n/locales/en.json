@@ -143,7 +143,7 @@
   "targets.list_header": "saved target presets:",
   "targets.show_header": "targets for %s:",
   "tui.actions.title": "Actions · %s",
-  "tui.actions.help": "↑/↓ · space toggle · enter expand · p add · r rename · g regen · S/L preset · d action · R run · f refresh · esc back",
+  "tui.actions.help": "↑/↓ · space toggle · enter expand · p add · r rename · g regen · S/L preset · d action · V validate · R run · f refresh · esc back",
   "tui.actions.tree_empty": "no targets — add reference repos in workwood.yml or worktrees to this feature",
   "tui.actions.missing": "(missing)",
   "tui.actions.need_key": "no git branch found — enter a key for this path",
@@ -234,5 +234,15 @@
   "feature.relinked": "relinked %s — wrote %s",
   "feature.relink_ok": "%s — link OK",
   "tui.menu.links_broken": "⚠ feature link(s) need repair: %s — press r to fix",
-  "tui.menu.links_fixed": "✓ repaired %d feature link(s)"
+  "tui.menu.links_fixed": "✓ repaired %d feature link(s)",
+  "err.action_missing_method": "action %q has no %s function",
+  "err.action_validate_failed": "action %q is unavailable: %s",
+  "tui.actions.missing_methods": "missing Run/Validate",
+  "tui.actions.unavailable_status": "✗ %s unavailable: %s",
+  "tui.actions.cant_run": "%s is unavailable — press V to see why",
+  "tui.actions.picker_unavailable": "✗ no Run/Validate",
+  "tui.actions.badge_unavailable": "✗ unavailable",
+  "tui.actions.validated": "validated %s — %d/%d targets ok",
+  "tui.actions.target_summary": "%d/%d targets ✓",
+  "tui.actions.blocked_failed": "can't run — these enabled targets failed validation: %s"
 }

@@ -1,37 +1,43 @@
 #!/usr/bin/env bash
 # workwood-action: print each target's .workwood/hello-world.txt
+# workwood SOURCES this file and calls one function: Validate or Run.
 #
-# A tiny demo action. workwood hands it the selected targets as a YAML map
-# (key: /abs/path) — both as $1 and via $WORKWOOD_TARGETS. This action walks into
-# each target path and prints its .workwood/hello-world.txt.
-#
-# Seed those files first with the standalone helper at the project root:
+# Validate marks the action AVAILABLE only when at least one selected target
+# actually has its .workwood/hello-world.txt — i.e. "the child file is present, so
+# the target is targettable". Seed those files first with the standalone helper at
+# the project root:
 #     ./seed-hello-world.sh <path-to-the-feature's-worktrees>
-#
-#   workwood action hello-world <feature>
 set -euo pipefail
 
-# The targets file is $1 when run by workwood; fall back to the env var otherwise.
-targets="${1:-${WORKWOOD_TARGETS:?run via: workwood action hello-world <feature>}}"
+# Validate: available iff at least one target has a hello-world.txt to print.
+Validate() {
+    while IFS= read -r line; do
+        key=${line%%:*}
+        path=${line#*: }
+        [ -n "$key" ] && [ "$key" != "$line" ] || continue
+        [ -f "$path/.workwood/hello-world.txt" ] && return 0
+    done < "${WORKWOOD_TARGETS:?}"
+    return 1
+}
 
-while IFS= read -r line; do
-    key=${line%%:*}        # the target's name
-    path=${line#*: }       # its absolute path
-    [ -n "$key" ] && [ "$key" != "$line" ] || continue   # skip blank / "{}" lines
+# Run: print each target's hello-world.txt, then pause so the output stays
+# readable when launched from the TUI (which restores its screen on exit).
+Run() {
+    while IFS= read -r line; do
+        key=${line%%:*}
+        path=${line#*: }
+        [ -n "$key" ] && [ "$key" != "$line" ] || continue
+        file="$path/.workwood/hello-world.txt"
+        echo "== $key ($path) =="
+        if [ -f "$file" ]; then
+            cat "$file"
+        else
+            echo "(no $file — run ./seed-hello-world.sh on this feature's worktrees)"
+        fi
+    done < "$WORKWOOD_TARGETS"
 
-    file="$path/.workwood/hello-world.txt"
-    echo "== $key ($path) =="
-    if [ -f "$file" ]; then
-        cat "$file"
-    else
-        echo "(no $file — run ./seed-hello-world.sh on this feature's worktrees)"
-    fi
-done < "$targets"
-
-# Pause so the output stays readable: when launched from the workwood TUI, the
-# screen is restored on exit and would otherwise wipe this. Read from /dev/tty so
-# it works regardless of where stdin came from (the targets file was piped above).
-echo
-printf 'Program finished — press Enter to return to workwood… '
-read -r _ < /dev/tty 2>/dev/null || true
-echo
+    echo
+    printf 'Program finished — press Enter to return to workwood… '
+    read -r _ < /dev/tty 2>/dev/null || true
+    echo
+}

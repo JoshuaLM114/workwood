@@ -1,24 +1,31 @@
 #!/usr/bin/env bash
 # workwood-action: greet each selected target
-# DEFAULT workwood ACTION — helloworld. The simplest possible action: it greets
-# each selected target. workwood writes the feature's enabled targets to a YAML
-# file (key: /abs/path) and points WORKWOOD_TARGETS at it; the action just reads
-# them. workwood is dumb about what a target MEANS — that's entirely up to you.
-#
-#   workwood action helloworld <feature>
+# DEFAULT workwood ACTION — helloworld. workwood SOURCES this file and calls one
+# function: Validate (a pre-flight availability check) or Run. The feature's
+# enabled targets are a YAML "key: /abs/path" map at $WORKWOOD_TARGETS;
+# WORKWOOD_FEATURE is the active super-feature. workwood is dumb about what a
+# target MEANS — that's entirely up to you.
 #
 # Env:  WORKWOOD_TARGETS (path to a YAML key->path map)
 #       WORKWOOD_FEATURE (the active super-feature slug)
 #       WORKWOOD_ACTION  (this action's name)
 #       WORKWOOD_LANG    (active UI language — localize your own output if you like)
 set -euo pipefail
-: "${WORKWOOD_TARGETS:?run via: workwood action helloworld <feature>}"
 
-echo "hello from ${WORKWOOD_FEATURE:-?}"
-# Each line of the YAML map is "key: path". A tiny parse is enough — no yq/jq.
-while IFS= read -r line; do
-    key=${line%%:*}
-    path=${line#*: }
-    [ -n "$key" ] && [ "$key" != "$line" ] || continue
-    printf '  hello %s (%s)\n' "$key" "$path"
-done < "$WORKWOOD_TARGETS"
+# Validate: return 0 if this action can act on the targets. helloworld just needs
+# a targets file to read, so it's available whenever there are targets.
+Validate() {
+    [ -s "${WORKWOOD_TARGETS:-}" ]
+}
+
+# Run: greet every selected target. Each YAML line is "key: path" — a tiny parse
+# is enough (no yq/jq).
+Run() {
+    echo "hello from ${WORKWOOD_FEATURE:-?}"
+    while IFS= read -r line; do
+        key=${line%%:*}
+        path=${line#*: }
+        [ -n "$key" ] && [ "$key" != "$line" ] || continue
+        printf '  hello %s (%s)\n' "$key" "$path"
+    done < "$WORKWOOD_TARGETS"
+}

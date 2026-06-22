@@ -42,9 +42,10 @@ type actionsModel struct {
 	collapsed map[int]bool // serviceParent node index → collapsed
 	cursor    int          // index into visible
 
-	actions   []action.Action // discovered (marked + executable) actions
-	needChmod []string        // marked files that aren't executable (common mistake)
-	selected  string          // the chosen action's name (the top "dropdown")
+	actions     []action.Action // discovered (marked + executable) actions
+	needChmod   []string        // marked files that aren't executable (common mistake)
+	selected    string          // the chosen action's name (the top "dropdown")
+	targetValid map[string]bool // per-target Validate result (path → passed); nil = not validated
 
 	form          *huh.Form
 	formMode      actionsFormMode
@@ -80,6 +81,7 @@ func newActionsModel(m *Model, slug string) (*actionsModel, error) {
 	}
 	a.refreshActions()
 	a.rebuild()
+	a.validateSelected() // validate per target on entering the screen
 	return a, nil
 }
 
@@ -87,6 +89,7 @@ func newActionsModel(m *Model, slug string) (*actionsModel, error) {
 // selection if it's still present (else selecting the first, or none).
 func (a *actionsModel) refreshActions() {
 	a.actions, a.needChmod = action.Scan(a.m.cfg)
+	a.targetValid = nil // re-scanned → re-validate on next V
 	for _, act := range a.actions {
 		if act.Name == a.selected {
 			return // still valid
@@ -133,7 +136,69 @@ func (a *actionsModel) cur() (targetcfg.Node, int, bool) {
 	return a.nodes[a.visible[a.cursor]], a.visible[a.cursor], true
 }
 
-func (a *actionsModel) save() { _ = targetcfg.SaveWorking(a.m.cfg, a.man, a.working) }
+func (a *actionsModel) save() {
+	// Note: per-target results are independent of which targets are toggled (each
+	// is validated with its own single-target context), so toggling does NOT
+	// invalidate them — only changing the action or re-scanning does.
+	_ = targetcfg.SaveWorking(a.m.cfg, a.man, a.working)
+}
+
+// failedEnabled returns the keys of ENABLED targets that failed validation — the
+// ones that would block a run.
+func (a *actionsModel) failedEnabled() []string {
+	var bad []string
+	for _, n := range a.nodes {
+		if !n.Toggled {
+			continue
+		}
+		if ok, checked := a.targetValid[n.Path]; checked && !ok {
+			bad = append(bad, n.Key)
+		}
+	}
+	return bad
+}
+
+// findAction returns the discovered Action for name, or nil.
+func (a *actionsModel) findAction(name string) *action.Action {
+	for i := range a.actions {
+		if a.actions[i].Name == name {
+			return &a.actions[i]
+		}
+	}
+	return nil
+}
+
+// validateSelected validates the selected action against EVERY available target
+// (each candidate node, not just the enabled ones) by running the action's
+// Validate with that one target as its context. The per-target pass/fail is shown
+// as a ✓/✗ next to each target in the tree. A structurally-incomplete action
+// (missing Run/Validate) is reported without running anything.
+func (a *actionsModel) validateSelected() {
+	a.targetValid = nil
+	act := a.findAction(a.selected)
+	if act == nil {
+		return
+	}
+	if !act.Runnable() {
+		a.status = errStyle.Render(i18n.T("tui.actions.unavailable_status", a.selected, i18n.T("tui.actions.missing_methods")))
+		return
+	}
+	res := map[string]bool{}
+	pass, total := 0, 0
+	for _, n := range a.nodes {
+		if !n.Toggleable() {
+			continue
+		}
+		total++
+		ok := action.Validate(a.m.cfg, a.slug, a.selected, map[string]string{n.Key: n.Path}, a.man.Vars) == nil
+		res[n.Path] = ok
+		if ok {
+			pass++
+		}
+	}
+	a.targetValid = res
+	a.status = okStyle.Render(i18n.T("tui.actions.validated", a.selected, pass, total))
+}
 
 func (a *actionsModel) setSize(w, h int) { a.width, a.height = w, h }
 
@@ -226,13 +291,40 @@ func (a *actionsModel) Update(msg tea.Msg) (*actionsModel, tea.Cmd) {
 				a.status = warnStyle.Render(i18n.T("tui.actions.none_found", a.m.cfg.ActionsDir))
 				return a, nil
 			}
+			opts := make([]huh.Option[string], 0, len(a.actions))
+			for _, act := range a.actions {
+				label := act.Name
+				if !act.Runnable() { // structurally unavailable → mark it in the picker
+					label += "  " + i18n.T("tui.actions.picker_unavailable")
+				}
+				opts = append(opts, huh.NewOption(label, act.Name))
+			}
 			a.selVals = selectVals{choice: a.selected}
-			a.form = newSelectForm(i18n.T("tui.title.choose_action"), actionNames(a.actions), &a.selVals).WithWidth(min(72, a.width-4))
+			a.form = newSelectOptForm(i18n.T("tui.title.choose_action"), opts, &a.selVals).WithWidth(min(72, a.width-4))
 			a.formMode = afChooseAction
 			return a, a.form.Init()
+		case "V":
+			if a.selected == "" {
+				a.status = warnStyle.Render(i18n.T("tui.actions.none_found", a.m.cfg.ActionsDir))
+				return a, nil
+			}
+			a.validateSelected()
 		case "R":
 			if a.selected == "" {
 				a.status = warnStyle.Render(i18n.T("tui.actions.none_found", a.m.cfg.ActionsDir))
+				return a, nil
+			}
+			// Don't run a structurally-incomplete action (missing Run/Validate).
+			if act := a.findAction(a.selected); act == nil || !act.Runnable() {
+				a.status = errStyle.Render(i18n.T("tui.actions.cant_run", a.selected))
+				return a, nil
+			}
+			// Don't run when an enabled target failed validation.
+			if a.targetValid == nil {
+				a.validateSelected()
+			}
+			if failed := a.failedEnabled(); len(failed) > 0 {
+				a.status = errStyle.Render(i18n.T("tui.actions.blocked_failed", strings.Join(failed, ", ")))
 				return a, nil
 			}
 			return a, a.runAction(a.selected)
@@ -242,15 +334,6 @@ func (a *actionsModel) Update(msg tea.Msg) (*actionsModel, tea.Cmd) {
 		}
 	}
 	return a, nil
-}
-
-// actionNames extracts the names from discovered actions (for the picker).
-func actionNames(as []action.Action) []string {
-	names := make([]string, len(as))
-	for i, a := range as {
-		names[i] = a.Name
-	}
-	return names
 }
 
 func (a *actionsModel) toggle() {
@@ -309,7 +392,10 @@ func (a *actionsModel) onFormDone() tea.Cmd {
 	case afLoadPreset:
 		a.loadPreset(a.selVals.choice)
 	case afChooseAction:
-		a.selected = a.selVals.choice
+		if a.selVals.choice != a.selected {
+			a.selected = a.selVals.choice
+			a.validateSelected() // re-validate per target on action change
+		}
 	}
 	return nil
 }
@@ -431,6 +517,19 @@ func (a *actionsModel) View() string {
 		if d := a.selectedDesc(); d != "" {
 			line += "  " + dimStyle.Render(d)
 		}
+		// Badge: structural invalidity (missing Run/Validate) always shows; once
+		// validated, a per-target pass summary.
+		if act := a.findAction(a.selected); act != nil && !act.Runnable() {
+			line += "  " + errStyle.Render(i18n.T("tui.actions.badge_unavailable"))
+		} else if a.targetValid != nil {
+			pass := 0
+			for _, ok := range a.targetValid {
+				if ok {
+					pass++
+				}
+			}
+			line += "  " + dimStyle.Render(i18n.T("tui.actions.target_summary", pass, len(a.targetValid)))
+		}
 		b.WriteString(line + "\n")
 	}
 	sepW := a.width
@@ -464,11 +563,29 @@ func (a *actionsModel) View() string {
 		if !n.Exists {
 			path += " " + warnStyle.Render(i18n.T("tui.actions.missing"))
 		}
-		line := indent + marker + " " + label + "  " + dimStyle.Render(path)
+		// Per-target validation: a ✓/✗ mark on every validated target, and the
+		// ENABLED ones get their text coloured by the result (green = passed,
+		// red = failed).
+		vmark := ""
+		labelOut := label
+		if ok, checked := a.targetValid[n.Path]; checked && n.Toggleable() {
+			if ok {
+				vmark = "  " + okStyle.Render("✓")
+				if n.Toggled {
+					labelOut = okStyle.Render(label)
+				}
+			} else {
+				vmark = "  " + errStyle.Render("✗")
+				if n.Toggled {
+					labelOut = errStyle.Render(label)
+				}
+			}
+		}
+		line := indent + marker + " " + labelOut + "  " + dimStyle.Render(path)
 		if vi == a.cursor {
 			line = selectedRowStyle.Render(indent + marker + " " + label + "  " + path)
 		}
-		b.WriteString(line + "\n")
+		b.WriteString(line + vmark + "\n")
 	}
 
 	b.WriteString("\n")

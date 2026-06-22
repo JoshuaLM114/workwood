@@ -252,25 +252,43 @@ working set).
 
 ### Actions — scripts in `workwood/actions/`
 
-An **action is just a script** (any language) committed in the super-repo's
-**`workwood/actions/`** folder that **opts in** with a marker comment near the top:
+An **action is a bash script** committed in the super-repo's
+**`workwood/actions/`** folder that **opts in** with a marker comment and defines
+**two functions, `Run` and `Validate`**:
 
 ```sh
 #!/usr/bin/env bash
-# workwood-action: deploy to dev      # the text after ':' is an optional label
+# workwood-action: build each service       # text after ':' is an optional label
+
+# Validate: return non-zero if the action can't act on the current targets.
+Validate() { while read -r k p; do [ -x "$p/build.sh" ] || return 1; done < <(…); }
+
+# Run: do the thing.
+Run() { while read -r k p; do "$p/build.sh"; done < <(…); }
 ```
 
-The marker is how workwood tells an action from a stray helper executable —
-there's no way to validate a script's argument signature, so an explicit opt-in is
-the safe substitute (it's grepped, never run). A file without it is ignored.
+workwood **sources** the script and calls one function: **`Run`** when you run the
+action, **`Validate`** as a pre-flight check. The marker tells an action from a
+stray helper (it's grepped); the file must be **executable** (`chmod +x`) — a
+marked-but-non-executable file is reported so you know to fix it.
 
-The file must also be **executable** (`chmod +x`), since workwood runs it directly
-— a marked-but-non-executable file is reported so you know to `chmod +x` it.
+**Validation.** The TUI Actions screen validates **on entry**, on **`V`**, and
+when you switch action (`d`). workwood first checks the script defines both `Run` +
+`Validate`, then runs its `Validate` **once per available target** — each target
+handed in as the *sole* context — and marks every target **✓ / ✗** in the tree by
+whether its `Validate` passed. An **enabled** target's text is coloured by its
+result (**green** = passed, **red** = failed), and **a run is blocked while any
+enabled target is failing**. The picker greys out scripts missing a method, the top
+panel shows a `pass/total` summary, and a script with no `Run` + `Validate` can't
+be run (TUI **or** CLI). `Validate`'s job is yours — e.g. confirm the target has
+the "child script" it needs; the bundled `hello-world` only passes a target that
+has a `.workwood/hello-world.txt`.
 
-`workwood init` creates the folder empty; add your own and commit them. Three
-worked references ship in [`example/workwood/actions/`](example/workwood/actions):
-**`helloworld`** (greets each target), **`tmux`** (one window per target), and
-**`ssh`** (pick a target, open a shell there). Copy any into your project.
+`workwood init` creates the folder empty; add your own and commit them. Worked
+references ship in [`example/workwood/actions/`](example/workwood/actions):
+**`helloworld`** (greets each target), **`tmux`** (one window per target),
+**`ssh`** (open a shell in a target), and **`hello-world`** (whose `Validate` only
+marks it available when a target actually has a `.workwood/hello-world.txt`).
 
 ```sh
 workwood actions                         # list available (marked) actions

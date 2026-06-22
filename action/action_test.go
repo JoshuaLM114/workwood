@@ -2,6 +2,7 @@ package action
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,8 +16,8 @@ func TestCommandContextAndEnv(t *testing.T) {
 	if err := os.MkdirAll(actionsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A valid action must carry the opt-in marker.
-	if err := os.WriteFile(filepath.Join(actionsDir, "noop"), []byte("#!/bin/sh\n# workwood-action: noop\ntrue\n"), 0o755); err != nil {
+	// A valid action carries the marker and defines Run + Validate.
+	if err := os.WriteFile(filepath.Join(actionsDir, "noop"), []byte("#!/usr/bin/env bash\n# workwood-action: noop\nValidate() { true; }\nRun() { true; }\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{Root: dir, ActionsDir: actionsDir, FeaturesDir: dir}
@@ -88,6 +89,51 @@ func TestListMarker(t *testing.T) {
 	_, needChmod := Scan(cfg)
 	if len(needChmod) != 1 || needChmod[0] != "notexec" {
 		t.Errorf("needChmod = %v, want [notexec]", needChmod)
+	}
+}
+
+func TestMethodsAndValidate(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	dir := t.TempDir()
+	actionsDir := filepath.Join(dir, "actions")
+	if err := os.MkdirAll(actionsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(actionsDir, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// full: both functions; Validate exits 0 (available).
+	write("ok", "#!/usr/bin/env bash\n# workwood-action: ok\nValidate() { return 0; }\nRun() { :; }\n")
+	// unavailable: Validate exits 1.
+	write("bad", "#!/usr/bin/env bash\n# workwood-action: bad\nValidate() { return 1; }\nRun() { :; }\n")
+	// partial: missing Validate.
+	write("partial", "#!/usr/bin/env bash\n# workwood-action: partial\nRun() { :; }\n")
+
+	cfg := &config.Config{Root: dir, ActionsDir: actionsDir, FeaturesDir: dir}
+	by := map[string]Action{}
+	for _, a := range List(cfg) {
+		by[a.Name] = a
+	}
+	if a := by["ok"]; !a.HasRun || !a.HasValidate || !a.Runnable() {
+		t.Errorf("ok: %+v, want Run+Validate+Runnable", a)
+	}
+	if a := by["partial"]; !a.HasRun || a.HasValidate || a.Runnable() {
+		t.Errorf("partial: %+v, want HasRun only", a)
+	}
+
+	if err := Validate(cfg, "f", "ok", nil, nil); err != nil {
+		t.Errorf("ok should validate available: %v", err)
+	}
+	if err := Validate(cfg, "f", "bad", nil, nil); err == nil {
+		t.Error("bad should be unavailable (Validate exits 1)")
+	}
+	// Validating an action with no Validate function errors clearly.
+	if err := Validate(cfg, "f", "partial", nil, nil); err == nil {
+		t.Error("partial should error (no Validate function)")
 	}
 }
 

@@ -331,15 +331,21 @@ func newSelectForm(title string, opts []string, v *selectVals) *huh.Form {
 	for _, s := range opts {
 		o = append(o, huh.NewOption(s, s))
 	}
+	return newSelectOptForm(title, o, v)
+}
+
+// newSelectOptForm is newSelectForm with pre-built options, so labels can differ
+// from values (e.g. an unavailable-action marker on the label).
+func newSelectOptForm(title string, opts []huh.Option[string], v *selectVals) *huh.Form {
 	if v.choice == "" && len(opts) > 0 {
-		v.choice = opts[0]
+		v.choice = opts[0].Value
 	}
 	return form(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Key("sel").
 				Title(title).
-				Options(o...).
+				Options(opts...).
 				Value(&v.choice),
 		),
 	)

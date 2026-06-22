@@ -143,7 +143,7 @@
   "targets.list_header": "保存済みターゲットプリセット:",
   "targets.show_header": "%s のターゲット:",
   "tui.actions.title": "アクション · %s",
-  "tui.actions.help": "↑/↓ · space 切替 · enter 展開 · p 追加 · r 改名 · g 再生成 · S/L プリセット · d アクション · V 検証 · R 実行 · f 更新 · esc 戻る",
+  "tui.actions.help": "↑/↓ · space 切替 · enter 展開 · p 追加 · r 改名 · g 再生成 · S/L プリセット · d アクション · i 初期化 · V 検証 · R 実行 · f 更新 · esc 戻る",
   "tui.actions.tree_empty": "ターゲットがありません — workwood.yml に repo を追加するか、この feature に worktree を追加してください",
   "tui.actions.missing": "（不在）",
   "tui.actions.need_key": "git ブランチが見つかりません — このパスのキーを入力してください",
@@ -244,5 +244,8 @@
   "tui.actions.badge_unavailable": "✗ 利用不可",
   "tui.actions.validated": "%s を検証しました — %d/%d ターゲット OK",
   "tui.actions.target_summary": "%d/%d ターゲット ✓",
-  "tui.actions.blocked_failed": "実行できません — 検証に失敗した有効なターゲット: %s"
+  "tui.actions.blocked_failed": "実行できません — 検証に失敗した有効なターゲット: %s",
+  "tui.actions.no_init": "%s に Init 関数がありません",
+  "tui.actions.init_failed": "%s の init に失敗: %s",
+  "tui.actions.init_done": "✓ %s を初期化しました（選択ターゲットにファイル作成）"
 }

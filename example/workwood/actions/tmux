@@ -5,6 +5,9 @@
 # path; the session is named after the active super-feature.
 set -euo pipefail
 
+# Init: nothing to bootstrap — this action needs no per-target files.
+Init() { echo "nothing to initialize for ${WORKWOOD_ACTION:-this action}"; }
+
 # Validate: available when tmux is installed and there are targets.
 Validate() {
     command -v tmux >/dev/null 2>&1 || return 1

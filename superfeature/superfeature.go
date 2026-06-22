@@ -69,34 +69,53 @@ func checkProject(cfg *config.Config, m *manifest.Manifest) error {
 	return nil
 }
 
-// RunAction runs the named action against a feature's targets. With override==nil
-// it uses the feature's persisted working set; pass a non-nil Set to run against an
-// explicit configuration (e.g. a loaded preset). Validates the manifest's project
-// + UUID first.
-func RunAction(cfg *config.Config, slug, name string, override targetcfg.Set) error {
+// actionSet resolves the target set + manifest vars for running/initing an action
+// against a feature (validating the manifest's project + UUID, self-healing the
+// back-link). With override==nil it uses the feature's persisted working set.
+func actionSet(cfg *config.Config, slug string, override targetcfg.Set) (targetcfg.Set, map[string]string, error) {
 	m, err := manifest.Load(cfg.ManifestPath(slug))
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if err := checkProject(cfg, m); err != nil {
-		return err
+		return nil, nil, err
 	}
 	if m.ID == "" {
-		return i18n.Err("err.feature_not_adopted", slug)
+		return nil, nil, i18n.Err("err.feature_not_adopted", slug)
 	}
-	// Self-heal the back-link so running an action repairs a missing/stale one.
 	_, _ = config.EnsureFeatureLink(cfg, slug)
 	set := override
 	if set == nil {
 		pd, perr := projectdef.Load(cfg.ProjectDef)
 		if perr != nil {
-			return perr
+			return nil, nil, perr
 		}
 		if set, err = targetcfg.Working(cfg, pd, m); err != nil {
-			return err
+			return nil, nil, err
 		}
 	}
-	return action.Run(cfg, slug, name, set, m.Vars)
+	return set, m.Vars, nil
+}
+
+// RunAction runs the named action against a feature's targets. With override==nil
+// it uses the feature's persisted working set; pass a non-nil Set to run against
+// an explicit configuration (e.g. a loaded preset).
+func RunAction(cfg *config.Config, slug, name string, override targetcfg.Set) error {
+	set, vars, err := actionSet(cfg, slug, override)
+	if err != nil {
+		return err
+	}
+	return action.Run(cfg, slug, name, set, vars)
+}
+
+// InitAction runs the action's Init — its bootstrap that creates the minimal files
+// it needs in the selected targets (idempotent). Returns the action's output.
+func InitAction(cfg *config.Config, slug, name string, override targetcfg.Set) (string, error) {
+	set, vars, err := actionSet(cfg, slug, override)
+	if err != nil {
+		return "", err
+	}
+	return action.Init(cfg, slug, name, set, vars)
 }
 
 // ResolveBranch builds the full git branch for a worktree-branch-name. The real

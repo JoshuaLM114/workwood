@@ -143,7 +143,7 @@
   "targets.list_header": "saved target presets:",
   "targets.show_header": "targets for %s:",
   "tui.actions.title": "Actions · %s",
-  "tui.actions.help": "↑/↓ · space toggle · enter expand · p add · r rename · g regen · S/L preset · d action · V validate · R run · f refresh · esc back",
+  "tui.actions.help": "↑/↓ · space toggle · enter expand · p add · r rename · g regen · S/L preset · d action · i init · V validate · R run · f refresh · esc back",
   "tui.actions.tree_empty": "no targets — add reference repos in workwood.yml or worktrees to this feature",
   "tui.actions.missing": "(missing)",
   "tui.actions.need_key": "no git branch found — enter a key for this path",
@@ -244,5 +244,8 @@
   "tui.actions.badge_unavailable": "✗ unavailable",
   "tui.actions.validated": "validated %s — %d/%d targets ok",
   "tui.actions.target_summary": "%d/%d targets ✓",
-  "tui.actions.blocked_failed": "can't run — these enabled targets failed validation: %s"
+  "tui.actions.blocked_failed": "can't run — these enabled targets failed validation: %s",
+  "tui.actions.no_init": "%s has no Init function",
+  "tui.actions.init_failed": "init %s failed: %s",
+  "tui.actions.init_done": "✓ initialized %s (files in the selected targets)"
 }

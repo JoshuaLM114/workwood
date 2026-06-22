@@ -158,6 +158,25 @@ func (a *actionsModel) failedEnabled() []string {
 	return bad
 }
 
+// initSelected runs the selected action's Init (its bootstrap) against the current
+// working set, then re-validates so the per-target ✓/✗ reflect the new files.
+func (a *actionsModel) initSelected() {
+	act := a.findAction(a.selected)
+	if act == nil {
+		return
+	}
+	if !act.HasInit {
+		a.status = errStyle.Render(i18n.T("tui.actions.no_init", a.selected))
+		return
+	}
+	if _, err := action.Init(a.m.cfg, a.slug, a.selected, a.working, a.man.Vars); err != nil {
+		a.status = errStyle.Render(i18n.T("tui.actions.init_failed", a.selected, err.Error()))
+		return
+	}
+	a.status = okStyle.Render(i18n.T("tui.actions.init_done", a.selected))
+	a.validateSelected() // files now exist → refresh validation marks
+}
+
 // findAction returns the discovered Action for name, or nil.
 func (a *actionsModel) findAction(name string) *action.Action {
 	for i := range a.actions {
@@ -303,6 +322,12 @@ func (a *actionsModel) Update(msg tea.Msg) (*actionsModel, tea.Cmd) {
 			a.form = newSelectOptForm(i18n.T("tui.title.choose_action"), opts, &a.selVals).WithWidth(min(72, a.width-4))
 			a.formMode = afChooseAction
 			return a, a.form.Init()
+		case "i":
+			if a.selected == "" {
+				a.status = warnStyle.Render(i18n.T("tui.actions.none_found", a.m.cfg.ActionsDir))
+				return a, nil
+			}
+			a.initSelected()
 		case "V":
 			if a.selected == "" {
 				a.status = warnStyle.Render(i18n.T("tui.actions.none_found", a.m.cfg.ActionsDir))

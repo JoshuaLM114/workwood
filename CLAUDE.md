@@ -28,8 +28,9 @@ Mental model (memorize this):
   this feature's worktrees, + monorepo services). The *enabled* subset is what an
   action acts on. Reusable named **presets** live at `$WORKWOOD_DATA/targets/`.
 - **action** — a bash script in `workwood/actions/` defining `Run` + `Validate`
-  functions, run against the working set. It gets a private per-feature state dir
-  via `WORKWOOD_ACTION_DATA` (workwood creates it but never touches its contents).
+  functions (and an optional `Init` bootstrap), run against the working set. It gets
+  a private per-feature state dir via `WORKWOOD_ACTION_DATA` (workwood creates it but
+  never touches its contents).
 - **`$WORKWOOD_DATA`** — the per-project data dir (clones, worktrees, state,
   presets). **Never committed**; set per project via the env var.
 
@@ -52,7 +53,7 @@ workwood sf create <name> [desc] [--shorthand s]
 workwood sf add <name> <repo> <wt-branch> [--from <src>] [--no-feature-prefix]
 workwood sf up | status | down | delete | relink [feature]   (feature defaults to cwd)
 workwood sf rename <slug> <new-name>         local display name only
-workwood action <name> [feature] [--targets <preset|file>]
+workwood action <name> [feature] [--targets <preset|file>] [--init]
 workwood actions                             list discovered actions
 workwood targets list | show [feature] | generate [feature]
 workwood project [info] | rename <name>      ·   workwood lang [en|ja]   ·   workwood version
@@ -66,7 +67,9 @@ workwood project [info] | rename <name>      ·   workwood lang [en|ja]   ·   w
   that (it derives nothing; no org/host).
 - An **action must define both `Run` and `Validate`** bash functions (no top-level
   code) — workwood *sources* the script and calls one. Missing either ⇒ it can't
-  run. See `docs/actions.md`.
+  run. An optional **`Init`** bootstraps the files the action needs in the selected
+  targets (idempotent); run it via `--init` or the TUI **`i`** key. See
+  `docs/actions.md`.
 - Manifests, `workwood.yml`, and actions are **committed**; everything under
   `$WORKWOOD_DATA` is **local + git-ignored** (state, clones, worktrees, presets,
   the feature back-link).

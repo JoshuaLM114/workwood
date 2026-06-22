@@ -10,8 +10,9 @@ An action script must:
 
 1. carry the marker comment `# workwood-action: <optional label>`,
 2. be **executable** (`chmod +x`),
-3. define two bash functions — **`Run`** and **`Validate`** — and **no top-level
-   work** (workwood `source`s the file and calls one function).
+3. define the bash functions — **`Run`** and **`Validate`** are required; **`Init`**
+   is an optional bootstrap (below) — and **no top-level work** (workwood `source`s
+   the file and calls one function).
 
 ```bash
 #!/usr/bin/env bash
@@ -34,6 +35,17 @@ Run() {
     [ -n "$key" ] && [ "$key" != "$line" ] || continue
     cat "$path/.workwood/hello-world.txt"
   done < "$WORKWOOD_TARGETS"
+}
+
+# Init (optional): create the minimal files the action needs, in each selected
+# target. MUST be idempotent — a re-run no-ops on targets already set up.
+Init() {
+  while IFS= read -r line; do
+    key=${line%%:*}; path=${line#*: }
+    [ -n "$key" ] && [ "$key" != "$line" ] || continue
+    file="$path/.workwood/hello-world.txt"
+    [ -f "$file" ] || { mkdir -p "$path/.workwood"; echo "hello, $key" > "$file"; }
+  done < "${WORKWOOD_TARGETS:?}"
 }
 ```
 
@@ -61,9 +73,22 @@ terminal and resumes when you exit. (See the bundled `tmux`, `ssh`, `helloworld`
 workwood actions                         # list discovered actions (+ availability)
 workwood action <name> [feature]         # run against the feature's working set
 workwood action <name> [feature] --targets <preset|file.yml>   # override the set
+workwood action <name> [feature] --init  # run the action's Init (bootstrap files)
 ```
 
 `[feature]` defaults to the feature you're standing in (`docs/super-features.md`).
+
+## Bootstrap (`Init`)
+
+`Init` creates the **minimal files an action needs to run** — e.g. the
+`hello-world.txt` that `Validate` looks for — in the **currently
+selected** targets. It **must be idempotent**: a target already set up is left
+untouched, so re-running is safe.
+
+- TUI Actions screen: **`i`** runs the selected action's `Init` against the working
+  set, then re-validates so the **✓ / ✗** marks update.
+- CLI: `workwood action <name> [feature] --init`.
+- Actions that need no per-target files should still define a no-op `Init`.
 
 ## Validation (`Validate`)
 

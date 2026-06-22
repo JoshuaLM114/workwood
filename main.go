@@ -500,6 +500,14 @@ func runAction(projectFlag string, args []string) error {
 			return err
 		}
 	}
+	// --init runs the action's Init (bootstrap files in the selected targets).
+	if hasFlag(flags, "init") {
+		out, err := superfeature.InitAction(cfg, feature, name, override)
+		if out != "" {
+			fmt.Print(out)
+		}
+		return err
+	}
 	return superfeature.RunAction(cfg, feature, name, override)
 }
 

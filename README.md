@@ -254,7 +254,7 @@ working set).
 
 An **action is a bash script** committed in the super-repo's
 **`workwood/actions/`** folder that **opts in** with a marker comment and defines
-**two functions, `Run` and `Validate`**:
+**`Run` and `Validate`** (and an optional **`Init`** bootstrap):
 
 ```sh
 #!/usr/bin/env bash
@@ -284,21 +284,28 @@ be run (TUI **or** CLI). `Validate`'s job is yours — e.g. confirm the target h
 the "child script" it needs; the bundled `hello-world` only passes a target that
 has a `.workwood/hello-world.txt`.
 
+**Bootstrap (`Init`).** An optional `Init` function creates the **minimal files an
+action needs** — e.g. that `.workwood/hello-world.txt` — in the **currently selected** targets, and must
+be **idempotent** (a re-run no-ops). Trigger it with **`i`** in the Actions screen
+(which then re-validates) or `workwood action <name> [feature] --init`.
+
 `workwood init` creates the folder empty; add your own and commit them. Worked
 references ship in [`example/workwood/actions/`](example/workwood/actions):
 **`helloworld`** (greets each target), **`tmux`** (one window per target),
 **`ssh`** (open a shell in a target), and **`hello-world`** (whose `Validate` only
-marks it available when a target actually has a `.workwood/hello-world.txt`).
+marks it available when a target actually has a `.workwood/hello-world.txt`, which
+its `Init` creates).
 
 ```sh
 workwood actions                         # list available (marked) actions
 workwood action helloworld voice         # run against voice's working set
 workwood action tmux voice --targets api-only   # …or against a saved preset
+workwood action hello-world voice --init        # create the files the action needs
 ```
 
 In the TUI Actions screen (`o` from a feature) the top panel is an action
-**dropdown** — `d` to choose, `R` to run it, `f` to re-scan the folder; the bottom
-panel is the target tree. If the folder has no marked actions you'll see a notice,
+**dropdown** — `d` to choose, `R` to run it, `i` to bootstrap it (`Init`), `V` to
+validate, `f` to re-scan the folder; the bottom panel is the target tree. If the folder has no marked actions you'll see a notice,
 but you can still edit targets. A terminal-takeover action like tmux suspends the
 TUI and resumes when it exits.
 
@@ -349,6 +356,7 @@ scripts, no tool-imposed semantics.
 | `workwood sf delete <name> [--prune-branches]` | remove worktrees + manifest (+ branches) |
 | `workwood sf relink [feature]` | validate a feature folder's back-link + regenerate it if missing/stale (all features if omitted) |
 | `workwood action <name> [feature] [--targets <preset\|file>]` | run an action against the feature's working set (or a preset) |
+| `workwood action <name> [feature] --init` | run the action's `Init` to bootstrap the files it needs in the selected targets |
 | `workwood actions` | list available actions |
 | `workwood targets list` | list saved presets |
 | `workwood targets show [feature]` | show a feature's working set |

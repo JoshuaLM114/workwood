@@ -20,6 +20,24 @@ Validate() {
     return 1
 }
 
+# Init: create the minimal file this action needs — .workwood/hello-world.txt — in
+# every currently-selected target. Idempotent: an existing file is left untouched.
+Init() {
+    while IFS= read -r line; do
+        key=${line%%:*}
+        path=${line#*: }
+        [ -n "$key" ] && [ "$key" != "$line" ] || continue
+        file="$path/.workwood/hello-world.txt"
+        if [ -f "$file" ]; then
+            echo "exists:  $file"
+        else
+            mkdir -p "$path/.workwood"
+            printf 'Hello, world! 👋  (%s)\n' "$key" > "$file"
+            echo "created: $file"
+        fi
+    done < "${WORKWOOD_TARGETS:?}"
+}
+
 # Run: print each target's hello-world.txt, then pause so the output stays
 # readable when launched from the TUI (which restores its screen on exit).
 Run() {

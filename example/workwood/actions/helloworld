@@ -12,6 +12,9 @@
 #       WORKWOOD_LANG    (active UI language — localize your own output if you like)
 set -euo pipefail
 
+# Init: nothing to bootstrap — this action needs no per-target files.
+Init() { echo "nothing to initialize for ${WORKWOOD_ACTION:-this action}"; }
+
 # Validate: return 0 if this action can act on the targets. helloworld just needs
 # a targets file to read, so it's available whenever there are targets.
 Validate() {

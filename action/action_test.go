@@ -151,6 +151,63 @@ func TestMethodsAndValidate(t *testing.T) {
 	}
 }
 
+func TestInit(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	dir := t.TempDir()
+	actionsDir := filepath.Join(dir, "actions")
+	if err := os.MkdirAll(actionsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// `boot` defines all three: Init creates a marker per target (idempotent),
+	// Validate requires it. `plain` has no Init.
+	parse := `while IFS= read -r l; do k=${l%%:*}; p=${l#*: }; [ "$k" != "$l" ] || continue; `
+	boot := "#!/usr/bin/env bash\n# workwood-action: boot\n" +
+		"Validate() { " + parse + `[ -f "$p/.marker" ] || return 1; done < "$WORKWOOD_TARGETS"; }` + "\n" +
+		"Run() { :; }\n" +
+		"Init() { " + parse + `[ -f "$p/.marker" ] || echo init > "$p/.marker"; done < "$WORKWOOD_TARGETS"; }` + "\n"
+	if err := os.WriteFile(filepath.Join(actionsDir, "boot"), []byte(boot), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(actionsDir, "plain"), []byte("#!/usr/bin/env bash\n# workwood-action: x\nRun(){ :; }\nValidate(){ :; }\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{Root: dir, ActionsDir: actionsDir, FeaturesDir: dir}
+	tgt := t.TempDir()
+	set := map[string]string{"svc": tgt}
+
+	var boota Action
+	for _, a := range List(cfg) {
+		if a.Name == "boot" {
+			boota = a
+		}
+	}
+	if !boota.HasInit || !boota.HasRun || !boota.HasValidate {
+		t.Fatalf("boot: %+v, want all three methods", boota)
+	}
+
+	if err := Validate(cfg, "f", "boot", set, nil); err == nil {
+		t.Error("Validate should fail before Init (no marker)")
+	}
+	if _, err := Init(cfg, "f", "boot", set, nil); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tgt, ".marker")); err != nil {
+		t.Fatalf("Init should create the marker: %v", err)
+	}
+	if err := Validate(cfg, "f", "boot", set, nil); err != nil {
+		t.Errorf("Validate should pass after Init: %v", err)
+	}
+	if _, err := Init(cfg, "f", "boot", set, nil); err != nil {
+		t.Errorf("a second Init should no-op cleanly: %v", err)
+	}
+	if _, err := Init(cfg, "f", "plain", set, nil); err == nil {
+		t.Error("Init on an action with no Init function should error")
+	}
+}
+
 func TestCommandUnknownAction(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{Root: dir, ActionsDir: filepath.Join(dir, "actions"), FeaturesDir: dir}

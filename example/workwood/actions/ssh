@@ -7,6 +7,9 @@
 # paths; what "connect" means is up to you.
 set -euo pipefail
 
+# Init: nothing to bootstrap — this action needs no per-target files.
+Init() { echo "nothing to initialize for ${WORKWOOD_ACTION:-this action}"; }
+
 # Validate: available when there's at least one "key: path" target.
 Validate() {
     [ -s "${WORKWOOD_TARGETS:-}" ] || return 1

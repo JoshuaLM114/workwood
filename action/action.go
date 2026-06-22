@@ -33,12 +33,14 @@ import (
 )
 
 // Action is a discovered action: its filename, the optional marker label, and
-// whether it defines the required Run / Validate functions.
+// which lifecycle functions it defines (Run + Validate are required to run; Init
+// is an optional bootstrap that creates the files the action needs).
 type Action struct {
 	Name        string
 	Description string
 	HasRun      bool
 	HasValidate bool
+	HasInit     bool
 }
 
 // Runnable reports whether an action defines both required functions.
@@ -48,19 +50,20 @@ func (a Action) Runnable() bool { return a.HasRun && a.HasValidate }
 // The \b stops it from matching "workwood-actions" or similar.
 var markerRe = regexp.MustCompile(`^\s*#\s*workwood-action\b\s*:?\s*(.*)$`)
 
-// runFuncRe / validateFuncRe match a bash function definition for Run / Validate,
-// in either `Name() {` or `function Name {` form.
+// {run,validate,init}FuncRe match a bash function definition, in either
+// `Name() {` or `function Name {` form.
 var (
 	runFuncRe      = regexp.MustCompile(`(?m)^[ \t]*(function[ \t]+Run\b|Run[ \t]*\([ \t]*\))`)
 	validateFuncRe = regexp.MustCompile(`(?m)^[ \t]*(function[ \t]+Validate\b|Validate[ \t]*\([ \t]*\))`)
+	initFuncRe     = regexp.MustCompile(`(?m)^[ \t]*(function[ \t]+Init\b|Init[ \t]*\([ \t]*\))`)
 )
 
 // scanScript reads a candidate file once: its marker description (+ whether it's
-// marked at all), and whether it defines Run / Validate.
-func scanScript(path string) (desc string, marked, hasRun, hasValidate bool) {
+// marked at all), and whether it defines Run / Validate / Init.
+func scanScript(path string) (desc string, marked, hasRun, hasValidate, hasInit bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", false, false, false
+		return "", false, false, false, false
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		if m := markerRe.FindStringSubmatch(line); m != nil {
@@ -68,7 +71,7 @@ func scanScript(path string) (desc string, marked, hasRun, hasValidate bool) {
 			break
 		}
 	}
-	return desc, marked, runFuncRe.Match(data), validateFuncRe.Match(data)
+	return desc, marked, runFuncRe.Match(data), validateFuncRe.Match(data), initFuncRe.Match(data)
 }
 
 // Find returns the path of a discovered action named name (executable + marker),
@@ -76,7 +79,7 @@ func scanScript(path string) (desc string, marked, hasRun, hasValidate bool) {
 func Find(cfg *config.Config, name string) string {
 	p := filepath.Join(cfg.ActionsDir, name)
 	if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
-		if _, marked, _, _ := scanScript(p); marked {
+		if _, marked, _, _, _ := scanScript(p); marked {
 			return p
 		}
 	}
@@ -99,7 +102,7 @@ func Scan(cfg *config.Config) (actions []Action, needChmod []string) {
 		if err != nil {
 			continue
 		}
-		desc, marked, hasRun, hasValidate := scanScript(filepath.Join(cfg.ActionsDir, e.Name()))
+		desc, marked, hasRun, hasValidate, hasInit := scanScript(filepath.Join(cfg.ActionsDir, e.Name()))
 		if !marked {
 			continue // not marked → not an action, ignore silently
 		}
@@ -107,7 +110,7 @@ func Scan(cfg *config.Config) (actions []Action, needChmod []string) {
 			needChmod = append(needChmod, e.Name())
 			continue
 		}
-		actions = append(actions, Action{Name: e.Name(), Description: desc, HasRun: hasRun, HasValidate: hasValidate})
+		actions = append(actions, Action{Name: e.Name(), Description: desc, HasRun: hasRun, HasValidate: hasValidate, HasInit: hasInit})
 	}
 	sort.Slice(actions, func(i, j int) bool { return actions[i].Name < actions[j].Name })
 	sort.Strings(needChmod)
@@ -143,8 +146,8 @@ func invoke(cfg *config.Config, slug, name, fn string, set, vars map[string]stri
 		}
 		return nil, i18n.Err("err.no_action_avail", name, strings.Join(avail, ", "))
 	}
-	_, _, hasRun, hasValidate := scanScript(path)
-	if (fn == "Run" && !hasRun) || (fn == "Validate" && !hasValidate) {
+	_, _, hasRun, hasValidate, hasInit := scanScript(path)
+	if (fn == "Run" && !hasRun) || (fn == "Validate" && !hasValidate) || (fn == "Init" && !hasInit) {
 		return nil, i18n.Err("err.action_missing_method", name, fn)
 	}
 
@@ -187,11 +190,24 @@ func invoke(cfg *config.Config, slug, name, fn string, set, vars map[string]stri
 // action must define BOTH Run and Validate to be runnable.
 func Command(cfg *config.Config, slug, name string, set, vars map[string]string) (*exec.Cmd, error) {
 	if path := Find(cfg, name); path != "" {
-		if _, _, _, hasValidate := scanScript(path); !hasValidate {
+		if _, _, _, hasValidate, _ := scanScript(path); !hasValidate {
 			return nil, i18n.Err("err.action_missing_method", name, "Validate")
 		}
 	}
 	return invoke(cfg, slug, name, "Run", set, vars)
+}
+
+// Init runs the action's Init function — its bootstrap that creates the minimal
+// files the action needs in the currently-selected targets (idempotent: a re-run
+// no-ops). Captured; returns the combined output + error. Errors clearly if the
+// action defines no Init.
+func Init(cfg *config.Config, slug, name string, set, vars map[string]string) (string, error) {
+	cmd, err := invoke(cfg, slug, name, "Init", set, vars)
+	if err != nil {
+		return "", err
+	}
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 // Validate runs the action's Validate function against the targets as a pre-flight

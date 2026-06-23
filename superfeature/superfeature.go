@@ -11,6 +11,7 @@ package superfeature
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -518,6 +519,79 @@ func Delete(cfg *config.Config, name string, pruneBranches bool) error {
 		_ = config.SaveState(cfg.StateFile, st)
 	}
 	return os.Remove(path)
+}
+
+// RepoTeardown is the per-repo deletion choice for DeleteWalk. The three flags map
+// to the three things a super-feature worktree leaves on disk/in git.
+type RepoTeardown struct {
+	Repo, Branch, Path string
+	RemoveWorktree     bool // `git worktree remove --force`: delete the checkout + unregister it
+	DeleteFiles        bool // force `rm -rf` the directory (+ prune) if anything remains
+	DeleteBranch       bool // `git branch -D` in the base clone
+}
+
+// DeleteWalk deletes a super-feature, honouring a per-repo teardown plan, then
+// removes the feature record (back-link, empty feature dir, state entry, manifest).
+// It is the guided counterpart to Delete: each worktree's files/registration and
+// branch are removed only where the plan says so; kept artifacts are left in place
+// (orphaned by the user's choice). Destructive + not reversible. Returns a log.
+func DeleteWalk(cfg *config.Config, name string, plan []RepoTeardown) ([]string, error) {
+	path := cfg.ManifestPath(name)
+	m, err := manifest.Load(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var log []string
+	for _, p := range plan {
+		baseRepo := cfg.BaseRepo(p.Repo)
+		abs := cfg.Abs(p.Path)
+		isRepo := gitx.IsRepo(baseRepo)
+
+		switch {
+		case p.RemoveWorktree:
+			if isRepo && gitx.RemoveWorktree(baseRepo, abs) == nil {
+				log = append(log, i18n.T("log.delwalk.worktree", p.Repo, abs))
+			} else { // not git-managed (or git failed) → force-remove the directory
+				_ = os.RemoveAll(abs)
+				if isRepo {
+					_ = gitx.PruneWorktrees(baseRepo)
+				}
+				log = append(log, i18n.T("log.delwalk.files", p.Repo, abs))
+			}
+		case p.DeleteFiles:
+			_ = os.RemoveAll(abs)
+			if isRepo {
+				_ = gitx.PruneWorktrees(baseRepo)
+			}
+			log = append(log, i18n.T("log.delwalk.files", p.Repo, abs))
+		default:
+			log = append(log, i18n.T("log.delwalk.kept_files", p.Repo, abs))
+		}
+
+		if p.DeleteBranch {
+			if isRepo && gitx.DeleteBranch(baseRepo, p.Branch) == nil {
+				log = append(log, i18n.T("log.delwalk.branch", p.Repo, p.Branch))
+			}
+		} else {
+			log = append(log, i18n.T("log.delwalk.kept_branch", p.Repo, p.Branch))
+		}
+	}
+
+	// Remove the super-feature record. The feature dir + its .workwood/ go only if
+	// now empty, so any worktrees the user chose to keep survive.
+	_ = os.Remove(cfg.FeatureLinkPath(name))
+	_ = os.Remove(filepath.Dir(cfg.FeatureLinkPath(name)))
+	_ = os.Remove(cfg.FeatureDir(name))
+	if st, e := config.LoadState(cfg.StateFile); e == nil {
+		delete(st.Features, m.ID)
+		_ = config.SaveState(cfg.StateFile, st)
+	}
+	if err := os.Remove(path); err != nil {
+		return log, err
+	}
+	log = append(log, i18n.T("log.delwalk.record", name))
+	return log, nil
 }
 
 // StatusRow is one worktree's reported state.

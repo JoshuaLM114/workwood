@@ -125,8 +125,10 @@ workwood project rename "Pay"    # set YOUR local display name (slug unchanged)
 
 Running `workwood` (no args) opens a root menu with three entries:
 
-- **Super-features** — the feature picker; create one, or open one to edit its
-  worktrees (then `o` for its Actions screen).
+- **Super-features** — the feature picker; create one, `enter` to open one and edit
+  its worktrees (then `o` for its Actions screen), or **`x`** to **delete** one — a
+  guided, irreversible walkthrough that asks, per repo, whether to remove the
+  worktree, delete the local files, and delete the branch (see Super-features).
 - **Edit project** — add/remove the base repos in `workwood.yml`. **`a` add** is
   two steps: enter the repo name + its clone **URL** (required — workwood clones
   exactly that, deriving nothing), then pick its **default branch** from a dropdown

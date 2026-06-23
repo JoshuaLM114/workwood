@@ -79,7 +79,8 @@ func (lm *featuresModel) update(m *Model, msg tea.Msg) tea.Cmd {
 		if lm.list.FilterState() == list.Filtering {
 			break
 		}
-		if msg.String() == "enter" {
+		switch msg.String() {
+		case "enter":
 			it, ok := lm.list.SelectedItem().(featureItem)
 			if !ok {
 				return nil
@@ -89,6 +90,13 @@ func (lm *featuresModel) update(m *Model, msg tea.Msg) tea.Cmd {
 			}
 			slug := it.slug
 			return func() tea.Msg { return openEditorMsg{feature: slug} }
+		case "x": // delete the selected super-feature (guided, irreversible)
+			it, ok := lm.list.SelectedItem().(featureItem)
+			if !ok || it.create {
+				return nil
+			}
+			slug, name := it.slug, it.name
+			return func() tea.Msg { return openDeleteMsg{feature: slug, name: name} }
 		}
 	}
 	var cmd tea.Cmd

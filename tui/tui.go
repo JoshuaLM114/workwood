@@ -53,9 +53,11 @@ const (
 	screenActions
 	screenRepos // the "edit project" repo editor
 	screenSettings
+	screenDelete // the delete-super-feature walkthrough
 )
 
 type openEditorMsg struct{ feature string }
+type openDeleteMsg struct{ feature, name string }
 type openCreateMsg struct{}
 type openFeaturesMsg struct{}
 type openReposMsg struct{}
@@ -84,6 +86,7 @@ type Model struct {
 	editor   *editorModel
 	actions  *actionsModel
 	repos    *reposModel
+	delete   *deleteModel
 
 	createForm *huh.Form
 	createVals createVals
@@ -260,6 +263,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen = screenActions
 		return m, nil
 
+	case openDeleteMsg:
+		dm, err := newDeleteModel(m, msg.feature, msg.name)
+		if err != nil {
+			m.err = err
+			return m, nil
+		}
+		m.delete = dm
+		m.screen = screenDelete
+		return m, m.delete.form.Init()
+
 	case backMsg:
 		// Back walks the screen hierarchy: actions → editor → features → menu, and
 		// repos → menu.
@@ -302,6 +315,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case screenRepos:
 		var cmd tea.Cmd
 		m.repos, cmd = m.repos.Update(msg)
+		return m, cmd
+	case screenDelete:
+		var cmd tea.Cmd
+		m.delete, cmd = m.delete.Update(msg)
 		return m, cmd
 	case screenFeatures:
 		// esc → back to the menu; q / ctrl+c quit — but only when no filter is
@@ -443,6 +460,8 @@ func (m *Model) View() string {
 		return m.actions.View()
 	case screenRepos:
 		return m.repos.View()
+	case screenDelete:
+		return m.delete.View()
 	default:
 		return m.menu.View(m)
 	}

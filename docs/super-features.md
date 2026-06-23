@@ -35,6 +35,24 @@ workwood sf rename voice "Voice work"   # your LOCAL display name; slug/branches
   nor origin it **prompts before inventing a new local branch** (yes on EOF, so
   scripts aren't blocked).
 
+## Deleting a super-feature (guided)
+
+In the TUI super-features list, **`x`** on a feature opens a guided, **irreversible**
+delete. After an acknowledgement it walks **one page per repo**, asking three
+things independently:
+
+- **remove the worktree** — `git worktree remove --force` (deletes the checkout +
+  unregisters it from git),
+- **delete the local files** — force-removes the directory (+ prunes) if anything
+  remains (e.g. the base clone is gone),
+- **delete the branch** — `git branch -D` in the base clone.
+
+Worktree/files default **on**, the branch defaults **off** (branches may be
+pushed). It then removes the feature record (back-link, state entry, manifest); any
+worktree/branch you chose to keep is left in place. The non-interactive equivalent
+is `workwood sf delete <name> [--prune-branches]` (removes everything; prunes
+branches only with the flag).
+
 ## Run from inside a feature folder
 
 Each feature folder gets a back-link at

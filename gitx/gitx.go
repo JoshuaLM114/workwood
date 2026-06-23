@@ -161,6 +161,12 @@ func DeleteBranch(repo, branch string) error {
 	return run(repo, "branch", "-D", branch)
 }
 
+// PruneWorktrees clears stale worktree registrations (after a directory was
+// removed out-of-band, e.g. with rm -rf rather than `git worktree remove`).
+func PruneWorktrees(repo string) error {
+	return run(repo, "worktree", "prune")
+}
+
 // Checkout switches repo to branch (best-effort).
 func Checkout(repo, branch string) error { return run(repo, "checkout", branch) }
 

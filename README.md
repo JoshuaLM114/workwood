@@ -182,6 +182,12 @@ gets a `--<slug>` suffix so the checkouts don't collide. The one hard git rule i
 that a ref `x` can't coexist with `x/y` — `add` guards that and asks for a
 non-nesting name.
 
+In the **TUI** editor, **`a`** first asks for the repo and a **Create a new branch
+/ From an existing branch** choice. *From existing* lists the repo's branches
+(tagged local / remote / both) and checks the chosen one out directly — a
+remote-only branch becomes a local branch **tracking** it — instead of cutting a
+new `<shorthand>/…` branch.
+
 Commit `super-features/voice.yaml` and push it. A teammate then `git pull`s,
 runs `workwood repos pull`, and `workwood sf up voice` rebuilds the exact set.
 

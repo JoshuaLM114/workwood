@@ -5,8 +5,10 @@ import (
 	"strings"
 
 	"github.com/JoshuaLM114/workwood/config"
+	"github.com/JoshuaLM114/workwood/gitx"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/manifest"
+	"github.com/JoshuaLM114/workwood/repos"
 	"github.com/JoshuaLM114/workwood/superfeature"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,10 +19,19 @@ import (
 type formMode int
 
 const (
-	formNone formMode = iota
-	formAdd
+	formNone        formMode = iota
+	formAddMode              // phase 1: pick repo + new/from-existing
+	formAdd                  // phase 2: a NEW branch (name + placement + source)
+	formAddExisting          // phase 2: pick an EXISTING branch to check out
 	formMeta
 )
+
+// editorBranchesMsg carries a repo's branches back to the editor after the async
+// fetch kicked off when the user chose "from existing".
+type editorBranchesMsg struct {
+	repo     string
+	branches []repos.BranchRef
+}
 
 // rowKind distinguishes a persisted worktree from one staged for addition.
 type rowKind int
@@ -198,7 +209,7 @@ func (e *editorModel) Update(msg tea.Msg) (*editorModel, tea.Cmd) {
 			e.form = f
 		}
 		if e.form.State == huh.StateCompleted {
-			e.onFormDone()
+			return e, e.onFormDone() // may open the next phase (its Init cmd)
 		} else if e.form.State == huh.StateAborted {
 			e.form = nil
 			e.formMode = formNone
@@ -207,6 +218,16 @@ func (e *editorModel) Update(msg tea.Msg) (*editorModel, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case editorBranchesMsg:
+		e.busy = false
+		if len(msg.branches) == 0 {
+			e.status = warnStyle.Render(i18n.T("tui.status.no_branches", msg.repo))
+			return e, nil
+		}
+		e.form = newAddExistingForm(msg.branches, &e.addVals).WithWidth(min(72, e.width-2))
+		e.formMode = formAddExisting
+		return e, e.form.Init()
+
 	case applyDoneMsg:
 		e.busy = false
 		if msg.err != nil {
@@ -304,8 +325,18 @@ func (e *editorModel) syncTable() {
 
 func (e *editorModel) openAddForm() {
 	e.addVals = addVals{}
-	e.form = newAddForm(e.m.pd.Names(), e.man.BranchPrefix(), &e.addVals).WithWidth(min(72, e.width-2))
-	e.formMode = formAdd
+	e.form = newAddModeForm(e.m.pd.Names(), &e.addVals).WithWidth(min(72, e.width-2))
+	e.formMode = formAddMode
+}
+
+// fetchBranchesCmd refreshes a repo's remote refs then lists its branches, so the
+// "from existing" dropdown reflects teammates' pushed branches.
+func (e *editorModel) fetchBranchesCmd(repo string) tea.Cmd {
+	base := e.m.cfg.BaseRepo(repo)
+	return func() tea.Msg {
+		gitx.Fetch(base)
+		return editorBranchesMsg{repo: repo, branches: repos.Branches(base)}
+	}
 }
 
 func (e *editorModel) openMetaForm() {
@@ -333,24 +364,38 @@ func (e *editorModel) applyRename(newName string) {
 	}
 }
 
-// onFormDone reads back the completed form and applies the result.
-func (e *editorModel) onFormDone() {
+// onFormDone reads back the completed form and applies the result — or advances to
+// the next phase. It returns any follow-up command (a phase-2 form's Init, or the
+// branch fetch for "from existing").
+func (e *editorModel) onFormDone() tea.Cmd {
 	switch e.formMode {
+	case formAddMode:
+		if e.addVals.fromExisting {
+			// Phase 2 (existing): fetch the repo's branches, then show the dropdown.
+			e.form = nil
+			e.formMode = formNone
+			e.busy = true
+			e.status = i18n.T("tui.status.fetching_branches")
+			return e.fetchBranchesCmd(e.addVals.repo)
+		}
+		// Phase 2 (new): collect the new branch name + placement + source.
+		e.form = newAddForm(e.man.BranchPrefix(), &e.addVals).WithWidth(min(72, e.width-2))
+		e.formMode = formAdd
+		return e.form.Init()
 	case formAdd:
 		sub := strings.TrimSpace(e.addVals.sub)
-		add := superfeature.AddSpec{
+		e.stageAdd(superfeature.AddSpec{
 			Repo:              e.addVals.repo,
 			Sub:               sub,
 			From:              strings.TrimSpace(e.addVals.from),
 			OmitFeaturePrefix: e.addVals.omitPrefix,
-		}
-		e.rows = append(e.rows, editorRow{
-			kind:      rowStagedAdd,
-			add:       add,
-			addBranch: superfeature.ResolveBranchWith(e.man.BranchPrefix(), sub, add.OmitFeaturePrefix),
 		})
-		e.syncTable()
-		e.status = i18n.T("tui.status.staged_add")
+	case formAddExisting:
+		// Check out the chosen branch directly (no <feature>/ prefix) — addWorktree
+		// attaches to the local/remote branch.
+		if branch := strings.TrimSpace(e.addVals.branch); branch != "" {
+			e.stageAdd(superfeature.AddSpec{Repo: e.addVals.repo, Sub: branch, OmitFeaturePrefix: true})
+		}
 	case formMeta:
 		e.desc = e.metaVals.desc
 		e.applyRename(strings.TrimSpace(e.metaVals.name))
@@ -358,6 +403,18 @@ func (e *editorModel) onFormDone() {
 	}
 	e.form = nil
 	e.formMode = formNone
+	return nil
+}
+
+// stageAdd appends a staged worktree-add row from a resolved spec.
+func (e *editorModel) stageAdd(add superfeature.AddSpec) {
+	e.rows = append(e.rows, editorRow{
+		kind:      rowStagedAdd,
+		add:       add,
+		addBranch: superfeature.ResolveBranchWith(e.man.BranchPrefix(), add.Sub, add.OmitFeaturePrefix),
+	})
+	e.syncTable()
+	e.status = i18n.T("tui.status.staged_add")
 }
 
 // applyCmd runs the staged delta off the event loop.

@@ -29,6 +29,14 @@ workwood sf rename voice "Voice work"   # your LOCAL display name; slug/branches
 - Worktrees land at `$WORKWOOD_DATA/features/<slug>/<repo>` (a 2nd worktree of the
   same repo gets a `--<sub>` dir suffix). A ref `x` can't coexist with `x/y` — `add`
   guards that.
+- In the **TUI** editor, **`a`** (add a worktree) first asks for the repo and a
+  **Create a new branch / From an existing branch** choice. *New* then collects the
+  branch name, placement, and source (the CLI's `<sub>` / `--no-feature-prefix` /
+  `--from`). *From existing* lists the repo's branches (each tagged local / remote /
+  both) and checks the chosen one out **directly** — a remote-only branch becomes a
+  local branch **tracking** it (no `<feature>/` prefix). The dropdown is refreshed by
+  a `git fetch` when opened. (Git allows only one worktree per branch, so picking a
+  branch already checked out elsewhere fails on apply.)
 - **`sf up`** is how a teammate reconstructs your feature: `git pull` the super-repo,
   `workwood repos pull`, `workwood sf up <feature>`. For a worktree whose branch
   exists on origin it creates a tracking branch; if the branch is on neither local

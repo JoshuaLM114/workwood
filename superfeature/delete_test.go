@@ -8,6 +8,7 @@ import (
 
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/manifest"
+	"github.com/JoshuaLM114/workwood/projectdef"
 )
 
 // TestDeleteWalk builds a two-worktree feature, then deletes it with a mixed plan:
@@ -82,4 +83,62 @@ func TestDeleteWalk(t *testing.T) {
 
 func branchExists(repo, branch string) bool {
 	return exec.Command("git", "-C", repo, "rev-parse", "--verify", "refs/heads/"+branch).Run() == nil
+}
+
+// TestAddExistingRemoteBranch is the core of the "from existing" add: adding a
+// worktree whose branch already exists on origin (Sub = the raw branch,
+// OmitFeaturePrefix) must check it out as a LOCAL branch TRACKING origin — not cut
+// a new <feature>/<sub> branch.
+func TestAddExistingRemoteBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+	up := filepath.Join(root, "upstream")
+	mk(t, up)
+	git(t, up, "init", "-q", "-b", "main")
+	git(t, up, "commit", "-q", "--allow-empty", "-m", "init")
+	git(t, up, "branch", "feat/exists", "main") // a teammate's pushed branch
+
+	mainDir := filepath.Join(root, "main")
+	mk(t, mainDir)
+	if out, err := exec.Command("git", "clone", "-q", up, filepath.Join(mainDir, "svc")).CombinedOutput(); err != nil {
+		t.Fatalf("clone: %v\n%s", err, out)
+	}
+
+	repoRoot := filepath.Join(root, "super")
+	mk(t, repoRoot)
+	pdFile := filepath.Join(repoRoot, "workwood.yml")
+	if err := os.WriteFile(pdFile, []byte("name: demo\nrepos:\n  - name: svc\n    default_branch: main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Root: repoRoot, ProjectDef: pdFile, MainDir: mainDir,
+		FeaturesDir:  filepath.Join(root, "features"),
+		ManifestsDir: filepath.Join(root, "manifests"),
+		StateDir:     filepath.Join(root, "state"),
+		StateFile:    filepath.Join(root, "state.yml"),
+	}
+	if err := Create(cfg, "demo", "", "demo"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pd, err := projectdef.Load(pdFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wt, err := Add(cfg, pd, "demo", AddSpec{Repo: "svc", Sub: "feat/exists", OmitFeaturePrefix: true})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if wt.Branch != "feat/exists" {
+		t.Fatalf("branch = %q, want feat/exists (no feature prefix)", wt.Branch)
+	}
+	abs := cfg.Abs(wt.Path)
+	if got := gitOut(t, abs, "rev-parse", "--abbrev-ref", "HEAD"); got != "feat/exists" {
+		t.Errorf("HEAD = %q, want feat/exists", got)
+	}
+	if up := gitOut(t, abs, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"); up != "origin/feat/exists" {
+		t.Errorf("upstream = %q, want origin/feat/exists (worktree must track the remote)", up)
+	}
 }

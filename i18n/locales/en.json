@@ -268,5 +268,13 @@
   "log.delwalk.kept_files": "%s: kept local files (%s)",
   "log.delwalk.branch": "%s: deleted branch %s",
   "log.delwalk.kept_branch": "%s: kept branch %s",
-  "log.delwalk.record": "removed the feature record for '%s'"
+  "log.delwalk.record": "removed the feature record for '%s'",
+  "tui.form.branch_mode": "Branch",
+  "tui.form.branch_mode_desc": "Create a new branch, or check out an existing one",
+  "tui.form.mode_new": "Create a new branch",
+  "tui.form.mode_existing": "From an existing branch",
+  "tui.form.existing_branch": "Existing branch",
+  "tui.form.existing_branch_desc": "The worktree checks this branch out (a remote-only branch becomes a local branch tracking it)",
+  "tui.status.fetching_branches": "fetching branches…",
+  "tui.status.no_branches": "no branches found for '%s'"
 }

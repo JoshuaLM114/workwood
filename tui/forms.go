@@ -81,17 +81,21 @@ func newCreateForm(cfg *config.Config, v *createVals) *huh.Form {
 	)
 }
 
-// addVals holds the add-worktree form bindings.
+// addVals holds the add-worktree form bindings across its phases: phase 1 picks
+// the repo + mode (new vs from-existing); phase 2 then collects either a new
+// branch name (+ placement + source) or an existing branch to check out.
 type addVals struct {
-	repo       string
-	sub        string
-	from       string
-	omitPrefix bool
+	repo         string
+	fromExisting bool   // phase 1: false = new branch, true = check out an existing one
+	sub          string // new-branch name (the part after <feature>/)
+	from         string // new-branch source ref
+	omitPrefix   bool   // new-branch placement: drop the <feature>/ prefix
+	branch       string // chosen existing branch (fromExisting)
 }
 
-// newAddForm builds the "add a worktree" form. feature is the super-feature slug,
-// used to preview the exact branch each placement choice produces.
-func newAddForm(repos []string, feature string, v *addVals) *huh.Form {
+// newAddModeForm is phase 1 of adding a worktree: pick the repo, then choose
+// between creating a new branch and checking out an existing one.
+func newAddModeForm(repos []string, v *addVals) *huh.Form {
 	opts := make([]huh.Option[string], 0, len(repos))
 	for _, r := range repos {
 		opts = append(opts, huh.NewOption(r, r))
@@ -106,6 +110,25 @@ func newAddForm(repos []string, feature string, v *addVals) *huh.Form {
 				Title(i18n.T("tui.form.repo")).
 				Options(opts...).
 				Value(&v.repo),
+			huh.NewSelect[bool]().
+				Key("mode").
+				Title(i18n.T("tui.form.branch_mode")).
+				Description(i18n.T("tui.form.branch_mode_desc")).
+				Options(
+					huh.NewOption(i18n.T("tui.form.mode_new"), false),
+					huh.NewOption(i18n.T("tui.form.mode_existing"), true),
+				).
+				Value(&v.fromExisting),
+		),
+	)
+}
+
+// newAddForm is phase 2 for a NEW branch: its name, placement, and source ref.
+// feature is the super-feature slug, used to preview the exact branch each
+// placement choice produces.
+func newAddForm(feature string, v *addVals) *huh.Form {
+	return form(
+		huh.NewGroup(
 			huh.NewInput().
 				Key("sub").
 				Title(i18n.T("tui.form.wt_branch")).
@@ -136,6 +159,29 @@ func newAddForm(repos []string, feature string, v *addVals) *huh.Form {
 				Title(i18n.T("tui.form.source")).
 				Description(i18n.T("tui.form.source_desc")).
 				Value(&v.from),
+		),
+	)
+}
+
+// newAddExistingForm is phase 2 for an EXISTING branch: a dropdown of the repo's
+// branches (each tagged local / remote / both). The worktree checks that branch
+// out directly — a remote-only branch becomes a local branch tracking it.
+func newAddExistingForm(branches []repos.BranchRef, v *addVals) *huh.Form {
+	opts := make([]huh.Option[string], 0, len(branches))
+	for _, b := range branches {
+		opts = append(opts, huh.NewOption(branchOptionLabel(b), b.Name))
+	}
+	if v.branch == "" && len(branches) > 0 {
+		v.branch = branches[0].Name
+	}
+	return form(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Key("branch").
+				Title(i18n.T("tui.form.existing_branch")).
+				Description(i18n.T("tui.form.existing_branch_desc")).
+				Options(opts...).
+				Value(&v.branch),
 		),
 	)
 }

@@ -268,5 +268,13 @@
   "log.delwalk.kept_files": "%s: ローカルファイルを保持 (%s)",
   "log.delwalk.branch": "%s: ブランチ %s を削除",
   "log.delwalk.kept_branch": "%s: ブランチ %s を保持",
-  "log.delwalk.record": "'%s' の機能レコードを除去"
+  "log.delwalk.record": "'%s' の機能レコードを除去",
+  "tui.form.branch_mode": "ブランチ",
+  "tui.form.branch_mode_desc": "新規ブランチを作成するか、既存のブランチをチェックアウト",
+  "tui.form.mode_new": "新規ブランチを作成",
+  "tui.form.mode_existing": "既存のブランチから",
+  "tui.form.existing_branch": "既存のブランチ",
+  "tui.form.existing_branch_desc": "ワークツリーはこのブランチをチェックアウトします（リモートのみのブランチは追跡するローカルブランチになります）",
+  "tui.status.fetching_branches": "ブランチを取得中…",
+  "tui.status.no_branches": "'%s' のブランチが見つかりません"
 }

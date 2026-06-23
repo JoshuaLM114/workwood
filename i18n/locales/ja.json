@@ -303,5 +303,8 @@
   "tui.reconcile.nothing": "変更なし",
   "tui.reconcile.done": "✓ 整合しました",
   "tui.reconcile.help": "tab/enter 次へ · ←/→ 選択 · esc 取消",
-  "tui.reconcile.return": "enter / esc で戻る"
+  "tui.reconcile.return": "enter / esc で戻る",
+  "tui.editor.loading": "お待ちください",
+  "tui.editor.working": "処理中…",
+  "tui.editor.loading_hint": "少し時間がかかる場合があります — git がリモートと通信中です"
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/JoshuaLM114/workwood/manifest"
 	"github.com/JoshuaLM114/workwood/repos"
 	"github.com/JoshuaLM114/workwood/superfeature"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -72,11 +73,20 @@ type editorModel struct {
 	addVals  addVals
 	metaVals metaVals
 
-	status string
-	busy   bool
-	width  int
-	height int
-	desync *superfeature.DiagnoseResult // manifest↔disk drift, refreshed on open/apply
+	status  string
+	busy    bool
+	spinner spinner.Model
+	width   int
+	height  int
+	desync  *superfeature.DiagnoseResult // manifest↔disk drift, refreshed on open/apply
+}
+
+// enterBusy switches the editor into its loading screen (status = what's happening)
+// and starts the spinner alongside the async cmd.
+func (e *editorModel) enterBusy(status string, cmd tea.Cmd) tea.Cmd {
+	e.busy = true
+	e.status = status
+	return tea.Batch(e.spinner.Tick, cmd)
 }
 
 // checkDesync refreshes the manifest↔disk diagnosis (best-effort; nil/clean when in
@@ -112,6 +122,7 @@ func newEditorModel(m *Model, slug string) (*editorModel, error) {
 	e.table.SetStyles(tableStyles())
 	e.rebuildRows()
 	e.checkDesync()
+	e.spinner = spinner.New(spinner.WithSpinner(spinner.Dot))
 	return e, nil
 }
 
@@ -231,6 +242,14 @@ func (e *editorModel) Update(msg tea.Msg) (*editorModel, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		if !e.busy {
+			return e, nil // stop ticking once the async op finished
+		}
+		var cmd tea.Cmd
+		e.spinner, cmd = e.spinner.Update(msg)
+		return e, cmd
+
 	case editorBranchesMsg:
 		e.busy = false
 		if len(msg.branches) == 0 {
@@ -295,13 +314,9 @@ func (e *editorModel) Update(msg tea.Msg) (*editorModel, tea.Cmd) {
 				e.status = i18n.T("tui.status.nothing")
 				return e, nil
 			}
-			e.busy = true
-			e.status = i18n.T("tui.status.applying")
-			return e, e.applyCmd()
+			return e, e.enterBusy(i18n.T("tui.status.applying"), e.applyCmd())
 		case "u":
-			e.busy = true
-			e.status = i18n.T("tui.status.rebuilding")
-			return e, e.upCmd()
+			return e, e.enterBusy(i18n.T("tui.status.rebuilding"), e.upCmd())
 		}
 	}
 
@@ -393,9 +408,7 @@ func (e *editorModel) onFormDone() tea.Cmd {
 			// Phase 2 (existing): fetch the repo's branches, then show the dropdown.
 			e.form = nil
 			e.formMode = formNone
-			e.busy = true
-			e.status = i18n.T("tui.status.fetching_branches")
-			return e.fetchBranchesCmd(e.addVals.repo)
+			return e.enterBusy(i18n.T("tui.status.fetching_branches"), e.fetchBranchesCmd(e.addVals.repo))
 		}
 		// Phase 2 (new): collect the new branch name + placement + source.
 		e.form = newAddForm(e.man.BranchPrefix(), &e.addVals).WithWidth(min(72, e.width-2))
@@ -507,6 +520,17 @@ func (e *editorModel) reloadAfterApply(res *superfeature.EditResult, applyErr er
 }
 
 func (e *editorModel) View() string {
+	if e.busy {
+		// A dedicated loading screen so it's clear an async op is running (rather
+		// than leaving the prior screen up with a small status line).
+		msg := e.status
+		if strings.TrimSpace(msg) == "" {
+			msg = i18n.T("tui.editor.working")
+		}
+		body := e.spinner.View() + "  " + msg
+		return docStyle.Render(titleStyle.Render(i18n.T("tui.editor.loading")) + "\n\n" + body + "\n\n" + helpStyle.Render(i18n.T("tui.editor.loading_hint")))
+	}
+
 	if e.form != nil {
 		title := i18n.T("tui.title.add_worktree")
 		if e.formMode == formMeta {

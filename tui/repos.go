@@ -7,6 +7,7 @@ import (
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/projectdef"
 	"github.com/JoshuaLM114/workwood/repos"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 )
@@ -79,12 +80,14 @@ type reposModel struct {
 	branchVals branchVals
 	status     string
 	busy       bool
+	spinner    spinner.Model
 	width      int
 	height     int
 }
 
 func newReposModel(m *Model) *reposModel {
 	r := &reposModel{m: m}
+	r.spinner = spinner.New(spinner.WithSpinner(spinner.Dot))
 	r.rebuild()
 	return r
 }
@@ -138,6 +141,14 @@ func (r *reposModel) Update(msg tea.Msg) (*reposModel, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		if !r.busy {
+			return r, nil
+		}
+		var cmd tea.Cmd
+		r.spinner, cmd = r.spinner.Update(msg)
+		return r, cmd
+
 	case addBranchesMsg:
 		// Step 1 finished and branches are in → open step 2 (branch picker), or a
 		// free-text fallback when listing came back empty.
@@ -198,7 +209,7 @@ func (r *reposModel) Update(msg tea.Msg) (*reposModel, tea.Cmd) {
 		case "p":
 			r.busy = true
 			r.status = i18n.T("tui.repos.syncing")
-			return r, r.syncCmd()
+			return r, tea.Batch(r.spinner.Tick, r.syncCmd())
 		}
 	}
 	return r, nil
@@ -246,9 +257,9 @@ func (r *reposModel) beginAdd() tea.Cmd {
 	r.busy = true
 	r.status = i18n.T("tui.repos.fetching_branches", name)
 	url := strings.TrimSpace(r.repoVals.url)
-	return func() tea.Msg {
+	return tea.Batch(r.spinner.Tick, func() tea.Msg {
 		return addBranchesMsg{branches: repos.RemoteBranchesFor(url)}
-	}
+	})
 }
 
 // addRepo (step 2) appends the repo with the chosen default branch.
@@ -331,6 +342,14 @@ func stateLabel(s repos.CloneState) string {
 }
 
 func (r *reposModel) View() string {
+	if r.busy {
+		msg := r.status
+		if strings.TrimSpace(msg) == "" {
+			msg = i18n.T("tui.editor.working")
+		}
+		body := r.spinner.View() + "  " + msg
+		return docStyle.Render(titleStyle.Render(i18n.T("tui.editor.loading")) + "\n\n" + body + "\n\n" + helpStyle.Render(i18n.T("tui.editor.loading_hint")))
+	}
 	if r.form != nil {
 		title := i18n.T("tui.repos.add_title")
 		if r.formMode == rfEditBranch || r.formMode == rfAddBranch {

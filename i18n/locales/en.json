@@ -303,5 +303,8 @@
   "tui.reconcile.nothing": "nothing changed",
   "tui.reconcile.done": "✓ reconciled",
   "tui.reconcile.help": "tab/enter next · ←/→ choose · esc cancel",
-  "tui.reconcile.return": "press enter / esc to return"
+  "tui.reconcile.return": "press enter / esc to return",
+  "tui.editor.loading": "Please wait",
+  "tui.editor.working": "working…",
+  "tui.editor.loading_hint": "this can take a moment — git is talking to the remote"
 }

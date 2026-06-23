@@ -191,6 +191,14 @@ new `<shorthand>/…` branch.
 Commit `super-features/voice.yaml` and push it. A teammate then `git pull`s,
 runs `workwood repos pull`, and `workwood sf up voice` rebuilds the exact set.
 
+Applying a batch of staged adds/removes **persists the manifest after each one**, so
+an error partway can't leave a worktree on disk that the manifest doesn't record —
+the successes are saved and the failed item is reported. If the two ever drift
+anyway (an interrupted run, a manual `git worktree`/`rm`), `workwood sf doctor
+[feature]` — or **`D`** in the TUI editor — reports **orphans** (on disk, untracked)
+and **missing** (tracked, no checkout) and lets you adopt, rebuild, remove, or drop
+each.
+
 ### Working from inside a feature folder
 
 You don't have to keep a terminal in the super-repo. Each feature folder
@@ -363,6 +371,7 @@ scripts, no tool-imposed semantics.
 | `workwood sf down <name>` | remove ALL worktrees, keep the manifest |
 | `workwood sf delete <name> [--prune-branches]` | remove worktrees + manifest (+ branches) |
 | `workwood sf relink [feature]` | validate a feature folder's back-link + regenerate it if missing/stale (all features if omitted) |
+| `workwood sf doctor [feature] [--adopt\|--remove-orphans] [--rebuild\|--drop]` | report + resolve manifest↔disk drift (orphan / missing worktrees); per-item prompts without flags |
 | `workwood action <name> [feature] [--targets <preset\|file>]` | run an action against the feature's working set (or a preset) |
 | `workwood action <name> [feature] --init` | run the action's `Init` to bootstrap the files it needs in the selected targets |
 | `workwood actions` | list available actions |

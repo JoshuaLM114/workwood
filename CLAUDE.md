@@ -51,7 +51,7 @@ workwood init [path]                         scaffold/sync a super-repo
 workwood repos pull | list                   clone/refresh base repos
 workwood sf create <name> [desc] [--shorthand s]
 workwood sf add <name> <repo> <wt-branch> [--from <src>] [--no-feature-prefix]
-workwood sf up | status | down | delete | relink [feature]   (feature defaults to cwd)
+workwood sf up | status | down | delete | relink | doctor [feature]   (feature defaults to cwd)
 workwood sf rename <slug> <new-name>         local display name only
 workwood action <name> [feature] [--targets <preset|file>] [--init]
 workwood actions                             list discovered actions

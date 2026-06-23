@@ -61,6 +61,27 @@ worktree/branch you chose to keep is left in place. The non-interactive equivale
 is `workwood sf delete <name> [--prune-branches]` (removes everything; prunes
 branches only with the flag).
 
+## Keeping the manifest in sync (doctor)
+
+A worktree's existence lives in two places — the **manifest** (the committed record)
+and the **disk** (the actual checkout + git worktree registration). `add`/`apply`
+keep them in lock-step: **`ApplyEdit` persists the manifest after each worktree it
+creates/removes**, so a mid-batch failure can't leave a worktree on disk that the
+manifest doesn't know about — what succeeded is saved, and the failed item is
+reported (in the TUI it stays staged to fix + retry).
+
+When they *do* drift (an interrupted run, a manual `git worktree`/`rm`), reconcile
+it:
+
+- **`workwood sf doctor [feature]`** reports **orphans** (a worktree on disk, not in
+  the manifest) and **missing** (a manifest entry with no checkout). With no flags it
+  asks per item: orphan → **adopt** into the manifest / **remove** from disk / skip;
+  missing → **rebuild** the checkout / **drop** from the manifest / skip. Bulk flags
+  skip the prompts: `--adopt` / `--remove-orphans`, `--rebuild` / `--drop`.
+- In the **TUI** editor a desync shows a banner (`⚠ N orphan(s) · M missing`);
+  **`D`** opens the same per-item walkthrough. Adopted/rebuilt worktrees then appear
+  as normal rows.
+
 ## Run from inside a feature folder
 
 Each feature folder gets a back-link at

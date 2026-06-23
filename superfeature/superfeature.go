@@ -649,6 +649,10 @@ func ApplyEdit(cfg *config.Config, pd *projectdef.File, name, description string
 	res := &EditResult{}
 	m.Description = description
 
+	// Persist after EACH on-disk change so a mid-batch failure can't desync the
+	// manifest from reality: every worktree we create/remove is recorded before the
+	// next op runs. On an error we save what already succeeded, then surface it — the
+	// caller keeps the failed item staged to fix + retry.
 	for _, rm := range removes {
 		branch := rm.Branch
 		if branch == "" {
@@ -661,24 +665,162 @@ func ApplyEdit(cfg *config.Config, pd *projectdef.File, name, description string
 		}
 		w := m.Worktrees[idx]
 		if err := RemoveBranchEntry(cfg, m, w, rm.PruneBranch); err != nil {
+			_ = manifest.Save(path, m)
 			return res, err
 		}
 		res.Removed = append(res.Removed, w)
 		res.Log = append(res.Log, i18n.T("log.removed", w.Path))
+		if err := manifest.Save(path, m); err != nil {
+			return res, err
+		}
 	}
 
 	for _, spec := range adds {
 		wt, err := provision(cfg, pd, m, spec)
 		if err != nil {
+			_ = manifest.Save(path, m) // record the worktrees already provisioned
 			return res, err
 		}
 		m.Worktrees = append(m.Worktrees, wt)
 		res.Added = append(res.Added, wt)
 		res.Log = append(res.Log, i18n.T("log.added", wt.Repo, wt.Branch, wt.Path))
+		if err := manifest.Save(path, m); err != nil {
+			return res, err
+		}
 	}
 
-	if err := manifest.Save(path, m); err != nil {
-		return res, err
+	return res, manifest.Save(path, m) // final save covers a description-only edit
+}
+
+// ---- reconcile (doctor): detect + resolve manifest↔disk desyncs ------------
+
+// Orphan is a worktree present on disk under a feature dir but absent from the
+// feature's manifest — e.g. an apply died mid-batch before persisting it, or a
+// manual checkout. Repo/Branch are best-effort (Repo "" when the dir doesn't map
+// to a known base repo).
+type Orphan struct {
+	Repo, Branch, Base, Path, Abs string
+}
+
+// DiagnoseResult reports a feature's drift between its manifest and reality.
+type DiagnoseResult struct {
+	Feature string
+	Orphans []Orphan            // on disk under the feature dir, NOT in the manifest
+	Missing []manifest.Worktree // in the manifest, with NO checkout on disk
+}
+
+// OK reports whether the feature is in sync.
+func (d *DiagnoseResult) OK() bool { return len(d.Orphans) == 0 && len(d.Missing) == 0 }
+
+// Diagnose compares a feature's manifest against what's on disk: worktree dirs not
+// recorded (orphans) and recorded worktrees with no checkout (missing). Read-only.
+func Diagnose(cfg *config.Config, pd *projectdef.File, name string) (*DiagnoseResult, error) {
+	m, err := manifest.Load(cfg.ManifestPath(name))
+	if err != nil {
+		return nil, err
+	}
+	res := &DiagnoseResult{Feature: name}
+	known := map[string]bool{}
+	for _, w := range m.Worktrees {
+		known[w.Path] = true
+		if _, e := os.Stat(cfg.Abs(w.Path)); errors.Is(e, os.ErrNotExist) {
+			res.Missing = append(res.Missing, w)
+		}
+	}
+	repoSet := map[string]bool{}
+	for _, r := range pd.Names() {
+		repoSet[r] = true
+	}
+	entries, _ := os.ReadDir(cfg.FeatureDir(name))
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == config.RepoWorkwoodDirName {
+			continue
+		}
+		rel := name + "/" + e.Name()
+		if known[rel] {
+			continue
+		}
+		abs := cfg.Abs(rel)
+		if !gitx.IsRepo(abs) {
+			continue // a stray dir that isn't a worktree → leave it alone
+		}
+		repo := e.Name()
+		if i := strings.Index(repo, "--"); i >= 0 {
+			repo = repo[:i] // strip the 2nd-worktree-of-same-repo dir suffix
+		}
+		if !repoSet[repo] {
+			repo = "" // unknown repo: still reported, but resolution is limited
+		}
+		branch, _ := gitx.CurrentBranch(abs)
+		base := ""
+		if repo != "" {
+			base = pd.DefaultBranch(repo)
+		}
+		res.Orphans = append(res.Orphans, Orphan{Repo: repo, Branch: branch, Base: base, Path: rel, Abs: abs})
 	}
 	return res, nil
+}
+
+// AdoptOrphan records an orphan worktree in the manifest (recovering it). Needs a
+// known repo + a resolvable branch.
+func AdoptOrphan(cfg *config.Config, name string, o Orphan) error {
+	if o.Repo == "" || o.Branch == "" {
+		return i18n.Err("err.adopt_unknown", o.Path)
+	}
+	path := cfg.ManifestPath(name)
+	m, err := manifest.Load(path)
+	if err != nil {
+		return err
+	}
+	if m.Find(o.Repo, o.Branch) >= 0 {
+		return nil // already tracked
+	}
+	m.Worktrees = append(m.Worktrees, manifest.Worktree{Repo: o.Repo, Branch: o.Branch, Base: o.Base, Path: o.Path})
+	return manifest.Save(path, m)
+}
+
+// RemoveOrphan deletes an orphan worktree from disk (git worktree remove, falling
+// back to a recursive delete + prune). Destructive.
+func RemoveOrphan(cfg *config.Config, o Orphan) error {
+	if o.Repo != "" {
+		baseRepo := cfg.BaseRepo(o.Repo)
+		if gitx.IsRepo(baseRepo) {
+			if gitx.RemoveWorktree(baseRepo, o.Abs) == nil {
+				return nil
+			}
+			if err := os.RemoveAll(o.Abs); err != nil {
+				return err
+			}
+			_ = gitx.PruneWorktrees(baseRepo)
+			return nil
+		}
+	}
+	return os.RemoveAll(o.Abs)
+}
+
+// RebuildMissing re-creates a manifest worktree whose checkout is gone, pruning any
+// stale registration first; like Up it attaches to the existing branch.
+func RebuildMissing(cfg *config.Config, w manifest.Worktree) error {
+	baseRepo := cfg.BaseRepo(w.Repo)
+	if !gitx.IsRepo(baseRepo) {
+		return i18n.Err("err.base_repo_missing", baseRepo)
+	}
+	_ = gitx.PruneWorktrees(baseRepo)
+	gitx.Fetch(baseRepo)
+	return addWorktree(baseRepo, w.Branch, w.Base, cfg.Abs(w.Path))
+}
+
+// DropMissing removes a worktree entry from the manifest (it has no checkout).
+func DropMissing(cfg *config.Config, name string, w manifest.Worktree) error {
+	path := cfg.ManifestPath(name)
+	m, err := manifest.Load(path)
+	if err != nil {
+		return err
+	}
+	idx := m.Find(w.Repo, w.Branch)
+	if idx < 0 {
+		return nil
+	}
+	m.Worktrees = append(m.Worktrees[:idx], m.Worktrees[idx+1:]...)
+	return manifest.Save(path, m)
 }

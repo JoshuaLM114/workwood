@@ -836,9 +836,119 @@ func runFeature(projectFlag string, args []string) error {
 		}
 		return nil
 
+	case "doctor", "reconcile":
+		return runDoctor(cfg, args)
+
 	default:
 		return i18n.Err("err.unknown_sf_sub", sub)
 	}
+}
+
+// runDoctor reports + resolves a feature's manifest↔disk desyncs: orphan worktrees
+// (on disk, untracked) and missing ones (tracked, no checkout). With no flags it
+// asks per item; --adopt / --remove-orphans / --rebuild / --drop run non-interactively.
+func runDoctor(cfg *config.Config, args []string) error {
+	pos, flags := splitFlags(args)
+	feat, err := featureArg(cfg, firstPos(pos), "err.usage_sf_doctor")
+	if err != nil {
+		return err
+	}
+	pd, err := projectdef.Load(cfg.ProjectDef)
+	if err != nil {
+		return err
+	}
+	d, err := superfeature.Diagnose(cfg, pd, feat)
+	if err != nil {
+		return err
+	}
+	if d.OK() {
+		fmt.Println(i18n.T("doctor.ok", feat))
+		return nil
+	}
+	fmt.Println(i18n.T("doctor.header", feat))
+	for _, o := range d.Orphans {
+		fmt.Println("  " + i18n.T("doctor.orphan", nz(o.Repo), nz(o.Branch), o.Abs))
+	}
+	for _, w := range d.Missing {
+		fmt.Println("  " + i18n.T("doctor.missing", w.Repo, w.Branch, w.Path))
+	}
+
+	adopt := hasFlag(flags, "adopt")
+	removeOrph := hasFlag(flags, "remove-orphans")
+	rebuild := hasFlag(flags, "rebuild")
+	drop := hasFlag(flags, "drop")
+	bulk := adopt || removeOrph || rebuild || drop
+
+	sc := bufio.NewScanner(os.Stdin)
+	ask := func(text, def string, valid ...string) string {
+		fmt.Print(text)
+		if !sc.Scan() {
+			fmt.Println()
+			return def
+		}
+		c := strings.ToLower(strings.TrimSpace(sc.Text()))
+		if c == "" {
+			return def
+		}
+		for _, v := range valid {
+			if c == v {
+				return c
+			}
+		}
+		return def
+	}
+	report := func(err error, okMsg string) {
+		if err != nil {
+			fmt.Println("  " + err.Error())
+		} else {
+			fmt.Println("  " + okMsg)
+		}
+	}
+
+	for _, o := range d.Orphans {
+		c := "s"
+		switch {
+		case adopt:
+			c = "a"
+		case removeOrph:
+			c = "r"
+		case !bulk:
+			c = ask(i18n.T("doctor.ask_orphan", nz(o.Repo), nz(o.Branch)), "s", "a", "r", "s")
+		}
+		switch c {
+		case "a":
+			report(superfeature.AdoptOrphan(cfg, feat, o), i18n.T("doctor.adopted", o.Path))
+		case "r":
+			report(superfeature.RemoveOrphan(cfg, o), i18n.T("doctor.removed", o.Abs))
+		}
+	}
+	for _, w := range d.Missing {
+		c := "s"
+		switch {
+		case rebuild:
+			c = "b"
+		case drop:
+			c = "d"
+		case !bulk:
+			c = ask(i18n.T("doctor.ask_missing", w.Repo, w.Branch), "s", "b", "d", "s")
+		}
+		switch c {
+		case "b":
+			report(superfeature.RebuildMissing(cfg, w), i18n.T("doctor.rebuilt", w.Path))
+		case "d":
+			report(superfeature.DropMissing(cfg, feat, w), i18n.T("doctor.dropped", w.Repo, w.Branch))
+		}
+	}
+	return nil
+}
+
+// nz returns s, or "?" when empty (for reporting an orphan whose repo/branch
+// couldn't be determined).
+func nz(s string) string {
+	if s == "" {
+		return "?"
+	}
+	return s
 }
 
 // renameFeature sets a super-feature's local active_name (keyed by its UUID),

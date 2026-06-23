@@ -76,6 +76,18 @@ type editorModel struct {
 	busy   bool
 	width  int
 	height int
+	desync *superfeature.DiagnoseResult // manifest↔disk drift, refreshed on open/apply
+}
+
+// checkDesync refreshes the manifest↔disk diagnosis (best-effort; nil/clean when in
+// sync). Cheap: a dir scan + a stat per worktree.
+func (e *editorModel) checkDesync() {
+	d, err := superfeature.Diagnose(e.m.cfg, e.m.pd, e.name)
+	if err != nil || d.OK() {
+		e.desync = nil
+		return
+	}
+	e.desync = d
 }
 
 // newEditorModel loads the feature (by slug) and builds its table.
@@ -99,6 +111,7 @@ func newEditorModel(m *Model, slug string) (*editorModel, error) {
 	)
 	e.table.SetStyles(tableStyles())
 	e.rebuildRows()
+	e.checkDesync()
 	return e, nil
 }
 
@@ -230,11 +243,10 @@ func (e *editorModel) Update(msg tea.Msg) (*editorModel, tea.Cmd) {
 
 	case applyDoneMsg:
 		e.busy = false
-		if msg.err != nil {
-			e.status = errStyle.Render(i18n.T("tui.status.apply_failed", msg.err.Error()))
-			return e, nil
-		}
-		e.reloadAfterApply(msg.res)
+		// Reload either way: ApplyEdit persists each success even when a later op
+		// fails, so the manifest now reflects reality. Succeeded adds become tracked
+		// rows; the failed/unprocessed ones stay staged to fix + retry.
+		e.reloadAfterApply(msg.res, msg.err)
 		return e, nil
 
 	case upDoneMsg:
@@ -271,6 +283,13 @@ func (e *editorModel) Update(msg tea.Msg) (*editorModel, tea.Cmd) {
 		case "o":
 			slug := e.name
 			return e, func() tea.Msg { return openActionsMsg{feature: slug} }
+		case "D":
+			if e.desync == nil {
+				e.status = okStyle.Render(i18n.T("tui.editor.in_sync"))
+				return e, nil
+			}
+			slug := e.name
+			return e, func() tea.Msg { return openReconcileMsg{feature: slug} }
 		case "s":
 			if !e.dirty() {
 				e.status = i18n.T("tui.status.nothing")
@@ -453,8 +472,12 @@ func (e *editorModel) upCmd() tea.Cmd {
 	}
 }
 
-// reloadAfterApply re-reads the manifest, clears staging, and reports the delta.
-func (e *editorModel) reloadAfterApply(res *superfeature.EditResult) {
+// reloadAfterApply re-reads the manifest, reconciles staging, and reports the
+// delta. applyErr is non-nil on a partial apply: the manifest already records what
+// succeeded, so we drop staged adds the manifest now contains (they landed) and
+// keep the rest staged to fix + retry. rebuildRows preserves staged adds + remove
+// flags, so the only thing to prune here is the succeeded adds.
+func (e *editorModel) reloadAfterApply(res *superfeature.EditResult, applyErr error) {
 	man, err := manifest.Load(e.m.cfg.ManifestPath(e.name))
 	if err != nil {
 		e.status = errStyle.Render(i18n.T("tui.status.reload_failed", err.Error()))
@@ -462,8 +485,20 @@ func (e *editorModel) reloadAfterApply(res *superfeature.EditResult) {
 	}
 	e.man = man
 	e.desc = man.Description
-	e.rows = nil
+	kept := e.rows[:0]
+	for _, r := range e.rows {
+		if r.kind == rowStagedAdd && man.Find(r.add.Repo, r.addBranch) >= 0 {
+			continue // this add landed in the manifest → no longer staged
+		}
+		kept = append(kept, r)
+	}
+	e.rows = kept
 	e.rebuildRows()
+	e.checkDesync()
+	if applyErr != nil {
+		e.status = errStyle.Render(i18n.T("tui.status.apply_partial", applyErr.Error()))
+		return
+	}
 	added, removed := 0, 0
 	if res != nil {
 		added, removed = len(res.Added), len(res.Removed)
@@ -487,6 +522,9 @@ func (e *editorModel) View() string {
 
 	if e.status != "" {
 		b.WriteString(e.status + "\n")
+	}
+	if e.desync != nil {
+		b.WriteString(warnStyle.Render(i18n.T("tui.editor.desync", len(e.desync.Orphans), len(e.desync.Missing))) + "\n")
 	}
 	dirtyHint := ""
 	if e.dirty() {

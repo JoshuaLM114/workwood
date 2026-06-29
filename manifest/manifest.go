@@ -14,6 +14,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/JoshuaLM114/workwood/fileio"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/version"
 	"gopkg.in/yaml.v3"
@@ -102,17 +103,10 @@ func Save(path string, m *Manifest) error {
 	if m.Worktrees == nil {
 		m.Worktrees = []Worktree{}
 	}
-	var buf strings.Builder
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(m); err != nil {
-		return err
-	}
-	enc.Close()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(buf.String()), 0o644)
+	return fileio.WriteYAML(path, m)
 }
 
 // NormPath strips a legacy leading "features/" from a manifest-stored worktree

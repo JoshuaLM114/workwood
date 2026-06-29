@@ -5,8 +5,8 @@ package projectdef
 
 import (
 	"os"
-	"strings"
 
+	"github.com/JoshuaLM114/workwood/fileio"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"gopkg.in/yaml.v3"
 )
@@ -52,14 +52,7 @@ func Load(path string) (*File, error) {
 // Save writes a workwood.yml to path (used by `workwood init` when scaffolding a
 // fresh super-repo).
 func Save(path string, f *File) error {
-	var buf strings.Builder
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(f); err != nil {
-		return err
-	}
-	enc.Close()
-	return os.WriteFile(path, []byte(buf.String()), 0o644)
+	return fileio.WriteYAML(path, f)
 }
 
 // DefaultBranch returns the configured default branch for repo name, or "" if

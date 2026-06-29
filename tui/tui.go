@@ -119,10 +119,16 @@ type bootSyncMsg struct {
 // of the ref repos (never pulls), plus a (local, instant) scan for feature folders
 // whose back-link is missing or stale.
 func (m *Model) bootFetchCmd() tea.Cmd {
-	cfg, pd := m.cfg, m.pd
+	cfg := m.cfg
+	// Snapshot the repo list. The live m.pd.Repos can be reassigned by the repos
+	// editor (add/remove/edit-branch) on the Update goroutine while this background
+	// fetch ranges over it — copy the slice so the goroutine shares nothing the
+	// event loop mutates (otherwise a -race-detectable data race).
+	pd := *m.pd
+	pd.Repos = append([]projectdef.Repo(nil), m.pd.Repos...)
 	return func() tea.Msg {
-		repos.FetchAll(cfg, pd)
-		return bootSyncMsg{outOfSync: repos.OutOfSync(cfg, pd), brokenLinks: brokenFeatureLinks(cfg)}
+		repos.FetchAll(cfg, &pd)
+		return bootSyncMsg{outOfSync: repos.OutOfSync(cfg, &pd), brokenLinks: brokenFeatureLinks(cfg)}
 	}
 }
 

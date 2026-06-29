@@ -247,78 +247,21 @@ func runInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	actionsDir := filepath.Join(root, config.WorkwoodDirName, config.ActionsDirName)
-	manifestsDir := filepath.Join(root, config.WorkwoodDirName, config.ManifestsDirName)
-	if err := os.MkdirAll(actionsDir, 0o755); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(manifestsDir, 0o755); err != nil {
-		return err
-	}
-
 	dataDir, err := ensureDataDir()
 	if err != nil {
 		return err
 	}
-	stateDir := dataDir
-	stateFile := filepath.Join(stateDir, config.StateFileName)
-	st, err := config.LoadState(stateFile)
+	res, err := config.InitProject(root, pd, dataDir)
 	if err != nil {
 		return err
 	}
-	if st.Project != "" && st.Project != pd.ID {
-		return i18n.Err("err.project_identity_mismatch", stateFile, st.Project, pd.ID)
-	}
-	st.Project = pd.ID
-	if st.Name == "" {
-		st.Name = projectSlug(pd, root)
-	}
 
-	// Track every committed super-feature locally, back-filling any manifest that
-	// predates UUIDs (writes the committed file for the user to commit).
-	mans, err := manifest.List(manifestsDir)
-	if err != nil {
-		return err
-	}
-	tracked := 0
-	for _, m := range mans {
-		if m.ID == "" {
-			m.ID = uuid.NewString()
-			m.Project = pd.ID
-			if err := manifest.Save(filepath.Join(manifestsDir, m.Feature+".yaml"), m); err != nil {
-				return err
-			}
-		}
-		if st.EnsureFeature(m.ID, m.Feature) {
-			tracked++
-		}
-	}
-	if err := config.SaveState(stateFile, st); err != nil {
-		return err
-	}
-
-	// Backfill the feature back-link for any feature already built on disk, so
-	// existing checkouts gain "run from the feature folder" without a rebuild.
-	if cfg, err := config.Build(root, pd, dataDir); err == nil {
-		for _, m := range mans {
-			if _, e := os.Stat(cfg.FeatureDir(m.Feature)); e == nil {
-				if e := config.WriteFeatureLink(cfg, m.Feature); e != nil {
-					return e
-				}
-			}
-		}
-	}
-
-	if err := ensureDataDirIgnored(root, dataDir); err != nil {
-		return err
-	}
-
-	fmt.Print(i18n.T("init.done", root, filepath.Join(root, config.ProjectDefName), actionsDir, manifestsDir, stateFile))
+	fmt.Print(i18n.T("init.done", root, filepath.Join(root, config.ProjectDefName), res.ActionsDir, res.ManifestsDir, res.StateFile))
 	if wroteDef {
 		fmt.Println(i18n.T("init.commit_hint", config.ProjectDefName))
 	}
-	if tracked > 0 {
-		fmt.Println(i18n.T("init.tracked", tracked))
+	if res.Tracked > 0 {
+		fmt.Println(i18n.T("init.tracked", res.Tracked))
 	}
 	return nil
 }
@@ -359,40 +302,6 @@ func ensureDef(root string) (*projectdef.File, bool, error) {
 		}
 	}
 	return pd, changed, nil
-}
-
-// ensureDataDirIgnored adds the data dir to .gitignore only when it lives inside
-// the super-repo (so a developer who points WORKWOOD_DATA in-repo won't commit
-// their checkouts). A data dir outside the repo needs no entry.
-func ensureDataDirIgnored(root, dataDir string) error {
-	rel, err := filepath.Rel(root, dataDir)
-	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
-		return nil
-	}
-	gi := filepath.Join(root, ".gitignore")
-	entry := "/" + filepath.ToSlash(rel) + "/"
-	data, err := os.ReadFile(gi)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == entry {
-			return nil
-		}
-	}
-	body := string(data)
-	if body != "" && !strings.HasSuffix(body, "\n") {
-		body += "\n"
-	}
-	return os.WriteFile(gi, []byte(body+entry+"\n"), 0o644)
-}
-
-// projectSlug is the project's original_name (workwood.yml name), else basename.
-func projectSlug(pd *projectdef.File, root string) string {
-	if pd.Name != "" {
-		return pd.Name
-	}
-	return filepath.Base(root)
 }
 
 // ---- project (info / rename) ----------------------------------------------
@@ -897,14 +806,9 @@ func runDoctor(cfg *config.Config, args []string) error {
 		}
 		return def
 	}
-	report := func(err error, okMsg string) {
-		if err != nil {
-			fmt.Println("  " + err.Error())
-		} else {
-			fmt.Println("  " + okMsg)
-		}
-	}
-
+	// Gather a decision per item, then apply them all via superfeature.Reconcile
+	// (shared with the TUI's doctor screen).
+	var plan superfeature.ReconcilePlan
 	for _, o := range d.Orphans {
 		c := "s"
 		switch {
@@ -917,9 +821,9 @@ func runDoctor(cfg *config.Config, args []string) error {
 		}
 		switch c {
 		case "a":
-			report(superfeature.AdoptOrphan(cfg, feat, o), i18n.T("doctor.adopted", o.Path))
+			plan.AdoptOrphans = append(plan.AdoptOrphans, o)
 		case "r":
-			report(superfeature.RemoveOrphan(cfg, o), i18n.T("doctor.removed", o.Abs))
+			plan.RemoveOrphans = append(plan.RemoveOrphans, o)
 		}
 	}
 	for _, w := range d.Missing {
@@ -934,9 +838,16 @@ func runDoctor(cfg *config.Config, args []string) error {
 		}
 		switch c {
 		case "b":
-			report(superfeature.RebuildMissing(cfg, w), i18n.T("doctor.rebuilt", w.Path))
+			plan.RebuildMissing = append(plan.RebuildMissing, w)
 		case "d":
-			report(superfeature.DropMissing(cfg, feat, w), i18n.T("doctor.dropped", w.Repo, w.Branch))
+			plan.DropMissing = append(plan.DropMissing, w)
+		}
+	}
+	for _, oc := range superfeature.Reconcile(cfg, feat, plan) {
+		if oc.Err != nil {
+			fmt.Println("  " + oc.Err.Error())
+		} else {
+			fmt.Println("  " + oc.Msg)
 		}
 	}
 	return nil

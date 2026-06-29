@@ -41,6 +41,8 @@
   "err.usage_sf_delete": "使い方: workwood sf delete <name> [--prune-branches]",
   "err.unknown_sf_sub": "不明な super-feature サブコマンド: %s",
   "err.manifest_exists": "マニフェストは既に存在します: %s",
+  "err.invalid_name": "無効な名前 %q: 空、パス区切り文字や '..' を含む、または '-' で始まることはできません",
+  "err.unsafe_path": "%q の削除を拒否しました: 解決されたパスが workwood データディレクトリの外側です",
   "err.no_manifest_create": "マニフェスト %s がありません（先に feature を作成してください）",
   "err.base_repo_missing": "ベース repo %s がありません（実行: workwood repos pull）",
   "err.ref_blocks": "ブランチ %q が既に存在し %q を妨げています（git ref 階層）; 既存のものの下にネストしないサブブランチを選んでください",

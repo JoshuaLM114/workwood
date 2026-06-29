@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/JoshuaLM114/workwood/config"
+	"github.com/JoshuaLM114/workwood/fileio"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"gopkg.in/yaml.v3"
 )
@@ -247,7 +248,7 @@ func writeContext(path string, set map[string]string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return fileio.Write(path, data, 0o644)
 }
 
 // envKey upper-cases a var key and replaces non-alphanumerics with '_' so it's a

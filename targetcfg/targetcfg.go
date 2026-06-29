@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/JoshuaLM114/workwood/config"
+	"github.com/JoshuaLM114/workwood/fileio"
 	"github.com/JoshuaLM114/workwood/gitx"
 	"github.com/JoshuaLM114/workwood/manifest"
 	"github.com/JoshuaLM114/workwood/projectdef"
@@ -110,7 +111,7 @@ func SavePreset(cfg *config.Config, name string, set Set) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(PresetPath(cfg, name), data, 0o644)
+	return fileio.Write(PresetPath(cfg, name), data, 0o644)
 }
 
 // LoadWorking returns a copy of the feature's persisted working set.

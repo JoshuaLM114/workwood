@@ -143,7 +143,39 @@ func ResolveBranchWith(prefix, sub string, omitPrefix bool) string {
 // (active_name defaulting to the slug). It refuses to clobber an existing feature,
 // and refuses to create one until the project's base repos are real clones (so
 // worktrees can actually be cut from them).
+// validName rejects a feature slug or repo name that could escape its directory
+// when joined into a path: empty, a "."/".." component, a path separator, or a
+// leading "-" (git could misread it as a flag).
+func validName(s string) error {
+	if s == "" || s == "." || s == ".." || strings.ContainsAny(s, `/\`) || strings.HasPrefix(s, "-") {
+		return i18n.Err("err.invalid_name", s)
+	}
+	return nil
+}
+
+// underData reports whether abs is strictly inside the data dir's features/ tree.
+func underData(cfg *config.Config, abs string) bool {
+	rel, err := filepath.Rel(cfg.FeaturesDir, filepath.Clean(abs))
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// safeRemoveAll removes abs only when it resolves inside the features tree — the
+// last-line guard so a corrupt or hand-edited manifest path can never delete
+// outside $WORKWOOD_DATA.
+func safeRemoveAll(cfg *config.Config, abs string) error {
+	if !underData(cfg, abs) {
+		return i18n.Err("err.unsafe_path", abs)
+	}
+	return os.RemoveAll(abs)
+}
+
 func Create(cfg *config.Config, slug, shorthand, desc string) error {
+	if err := validName(slug); err != nil {
+		return err
+	}
 	if err := CheckReposReady(cfg); err != nil {
 		return err
 	}
@@ -201,6 +233,9 @@ type AddSpec struct {
 // Add provisions one worktree for an existing feature and records it in the
 // manifest.
 func Add(cfg *config.Config, pd *projectdef.File, name string, spec AddSpec) (manifest.Worktree, error) {
+	if err := validName(name); err != nil {
+		return manifest.Worktree{}, err
+	}
 	path := cfg.ManifestPath(name)
 	m, err := manifest.Load(path)
 	if err != nil {
@@ -222,6 +257,9 @@ func Add(cfg *config.Config, pd *projectdef.File, name string, spec AddSpec) (ma
 // ref-hierarchy guard, attach-to-existing precedence, and directory-collision
 // suffixing.
 func provision(cfg *config.Config, pd *projectdef.File, m *manifest.Manifest, spec AddSpec) (manifest.Worktree, error) {
+	if err := validName(spec.Repo); err != nil {
+		return manifest.Worktree{}, err
+	}
 	branch := ResolveBranchWith(m.BranchPrefix(), spec.Sub, spec.OmitFeaturePrefix)
 	baseRepo := cfg.BaseRepo(spec.Repo)
 	if !gitx.IsRepo(baseRepo) {
@@ -390,6 +428,9 @@ func Up(cfg *config.Config, name string, onNew func(repo, branch string) bool) (
 // Down detaches every worktree (branches kept) and drops the feature dir. The
 // manifest is kept so it can be rebuilt.
 func Down(cfg *config.Config, name string) ([]string, error) {
+	if err := validName(name); err != nil {
+		return nil, err
+	}
 	path := cfg.ManifestPath(name)
 	m, err := manifest.Load(path)
 	if err != nil {
@@ -400,7 +441,7 @@ func Down(cfg *config.Config, name string) ([]string, error) {
 		removeWorktreeDir(cfg, w.Repo, w.Path)
 		log = append(log, i18n.T("log.down", w.Path))
 	}
-	_ = os.RemoveAll(cfg.FeatureDir(name))
+	_ = safeRemoveAll(cfg, cfg.FeatureDir(name))
 	return log, nil
 }
 
@@ -414,7 +455,7 @@ func removeWorktreeDir(cfg *config.Config, repo, relPath string) {
 			return
 		}
 	}
-	_ = os.RemoveAll(abs)
+	_ = safeRemoveAll(cfg, abs)
 }
 
 // RemoveSpec identifies a single worktree to remove and whether to also delete
@@ -497,6 +538,9 @@ func RemoveBranchEntry(cfg *config.Config, m *manifest.Manifest, w manifest.Work
 // Delete tears down all worktrees, optionally prunes the branches, and removes
 // the manifest.
 func Delete(cfg *config.Config, name string, pruneBranches bool) error {
+	if err := validName(name); err != nil {
+		return err
+	}
 	path := cfg.ManifestPath(name)
 	m, err := manifest.Load(path)
 	if err != nil {
@@ -536,6 +580,9 @@ type RepoTeardown struct {
 // branch are removed only where the plan says so; kept artifacts are left in place
 // (orphaned by the user's choice). Destructive + not reversible. Returns a log.
 func DeleteWalk(cfg *config.Config, name string, plan []RepoTeardown) ([]string, error) {
+	if err := validName(name); err != nil {
+		return nil, err
+	}
 	path := cfg.ManifestPath(name)
 	m, err := manifest.Load(path)
 	if err != nil {
@@ -553,14 +600,18 @@ func DeleteWalk(cfg *config.Config, name string, plan []RepoTeardown) ([]string,
 			if isRepo && gitx.RemoveWorktree(baseRepo, abs) == nil {
 				log = append(log, i18n.T("log.delwalk.worktree", p.Repo, abs))
 			} else { // not git-managed (or git failed) → force-remove the directory
-				_ = os.RemoveAll(abs)
+				if err := safeRemoveAll(cfg, abs); err != nil {
+					return log, err
+				}
 				if isRepo {
 					_ = gitx.PruneWorktrees(baseRepo)
 				}
 				log = append(log, i18n.T("log.delwalk.files", p.Repo, abs))
 			}
 		case p.DeleteFiles:
-			_ = os.RemoveAll(abs)
+			if err := safeRemoveAll(cfg, abs); err != nil {
+				return log, err
+			}
 			if isRepo {
 				_ = gitx.PruneWorktrees(baseRepo)
 			}
@@ -788,14 +839,14 @@ func RemoveOrphan(cfg *config.Config, o Orphan) error {
 			if gitx.RemoveWorktree(baseRepo, o.Abs) == nil {
 				return nil
 			}
-			if err := os.RemoveAll(o.Abs); err != nil {
+			if err := safeRemoveAll(cfg, o.Abs); err != nil {
 				return err
 			}
 			_ = gitx.PruneWorktrees(baseRepo)
 			return nil
 		}
 	}
-	return os.RemoveAll(o.Abs)
+	return safeRemoveAll(cfg, o.Abs)
 }
 
 // RebuildMissing re-creates a manifest worktree whose checkout is gone, pruning any
@@ -823,4 +874,45 @@ func DropMissing(cfg *config.Config, name string, w manifest.Worktree) error {
 	}
 	m.Worktrees = append(m.Worktrees[:idx], m.Worktrees[idx+1:]...)
 	return manifest.Save(path, m)
+}
+
+// ReconcilePlan is a resolved set of doctor decisions: which orphan worktrees to
+// adopt vs remove, and which manifest-but-missing worktrees to rebuild vs drop.
+// Build it from a DiagnoseResult — the CLI from prompts/flags, the TUI from a form
+// — then hand it to Reconcile. This is the DeleteWalk(plan) pattern: the caller
+// resolves the decisions, the package executes them.
+type ReconcilePlan struct {
+	AdoptOrphans   []Orphan
+	RemoveOrphans  []Orphan
+	RebuildMissing []manifest.Worktree
+	DropMissing    []manifest.Worktree
+}
+
+// ReconcileOutcome is one applied decision: its human message on success, or the
+// Err that occurred. The front-end formats it (e.g. the TUI styles the error).
+type ReconcileOutcome struct {
+	Msg string
+	Err error
+}
+
+// Reconcile applies a plan and returns one outcome per item, in a fixed order
+// (adopt, remove, rebuild, drop). Like the doctor front-ends it replaces, it does
+// NOT stop on the first error — a failure is recorded in its outcome and the
+// remaining items still run.
+func Reconcile(cfg *config.Config, name string, plan ReconcilePlan) []ReconcileOutcome {
+	var out []ReconcileOutcome
+	do := func(err error, msg string) { out = append(out, ReconcileOutcome{Msg: msg, Err: err}) }
+	for _, o := range plan.AdoptOrphans {
+		do(AdoptOrphan(cfg, name, o), i18n.T("doctor.adopted", o.Path))
+	}
+	for _, o := range plan.RemoveOrphans {
+		do(RemoveOrphan(cfg, o), i18n.T("doctor.removed", o.Abs))
+	}
+	for _, w := range plan.RebuildMissing {
+		do(RebuildMissing(cfg, w), i18n.T("doctor.rebuilt", w.Path))
+	}
+	for _, w := range plan.DropMissing {
+		do(DropMissing(cfg, name, w), i18n.T("doctor.dropped", w.Repo, w.Branch))
+	}
+	return out
 }

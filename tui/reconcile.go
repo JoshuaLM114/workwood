@@ -122,27 +122,28 @@ func (r *reconcileModel) Update(msg tea.Msg) (*reconcileModel, tea.Cmd) {
 
 // execute applies each chosen resolution, collecting a log.
 func (r *reconcileModel) execute() {
-	add := func(err error, ok string) {
-		if err != nil {
-			r.log = append(r.log, errStyle.Render(err.Error()))
-		} else {
-			r.log = append(r.log, ok)
-		}
-	}
+	var plan superfeature.ReconcilePlan
 	for _, ov := range r.vals.orphans {
 		switch ov.action {
 		case "adopt":
-			add(superfeature.AdoptOrphan(r.m.cfg, r.slug, ov.o), i18n.T("doctor.adopted", ov.o.Path))
+			plan.AdoptOrphans = append(plan.AdoptOrphans, ov.o)
 		case "remove":
-			add(superfeature.RemoveOrphan(r.m.cfg, ov.o), i18n.T("doctor.removed", ov.o.Abs))
+			plan.RemoveOrphans = append(plan.RemoveOrphans, ov.o)
 		}
 	}
 	for _, mv := range r.vals.missing {
 		switch mv.action {
 		case "rebuild":
-			add(superfeature.RebuildMissing(r.m.cfg, mv.w), i18n.T("doctor.rebuilt", mv.w.Path))
+			plan.RebuildMissing = append(plan.RebuildMissing, mv.w)
 		case "drop":
-			add(superfeature.DropMissing(r.m.cfg, r.slug, mv.w), i18n.T("doctor.dropped", mv.w.Repo, mv.w.Branch))
+			plan.DropMissing = append(plan.DropMissing, mv.w)
+		}
+	}
+	for _, oc := range superfeature.Reconcile(r.m.cfg, r.slug, plan) {
+		if oc.Err != nil {
+			r.log = append(r.log, errStyle.Render(oc.Err.Error()))
+		} else {
+			r.log = append(r.log, oc.Msg)
 		}
 	}
 	if len(r.log) == 0 {

@@ -1,8 +1,8 @@
 # Actions
 
 An action is a **bash script** in the super-repo's `workwood/actions/` folder that
-workwood **sources** and calls into. workwood is dumb about meaning — it hands the
-action the selected target paths and gets out of the way.
+workwood **sources** and calls into. Workwood is designed to be entirely flexible with it's actions.
+It merely passes the selected targets and the data repo which also allows for actions to save their data if required to do so.
 
 ## The contract (required)
 

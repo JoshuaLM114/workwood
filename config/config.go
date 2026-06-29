@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/JoshuaLM114/workwood/fileio"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/projectdef"
 	"github.com/JoshuaLM114/workwood/version"
@@ -163,7 +164,7 @@ func WriteFeatureLink(c *Config, slug string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return fileio.Write(path, data, 0o644)
 }
 
 // ReadFeatureLink parses a feature folder's link.yml.
@@ -249,14 +250,7 @@ func SaveApp(home string, app *AppSettings) error {
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return err
 	}
-	var buf strings.Builder
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(app); err != nil {
-		return err
-	}
-	enc.Close()
-	return os.WriteFile(AppPath(home), []byte(buf.String()), 0o644)
+	return fileio.WriteYAML(AppPath(home), app)
 }
 
 // ---- project location + build ---------------------------------------------

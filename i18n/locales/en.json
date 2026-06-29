@@ -41,6 +41,8 @@
   "err.usage_sf_delete": "usage: workwood sf delete <name> [--prune-branches]",
   "err.unknown_sf_sub": "unknown super-feature subcommand: %s",
   "err.manifest_exists": "manifest already exists: %s",
+  "err.invalid_name": "invalid name %q: must not be empty, contain a path separator or '..', or start with '-'",
+  "err.unsafe_path": "refusing to delete %q: resolved path is outside the workwood data directory",
   "err.no_manifest_create": "no manifest %s (create the feature first)",
   "err.base_repo_missing": "base repo %s missing (run: workwood repos pull)",
   "err.ref_blocks": "branch %q already exists and blocks %q (git ref hierarchy); pick a sub-branch that doesn't nest under an existing one",

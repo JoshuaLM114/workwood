@@ -3,8 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"strings"
 
+	"github.com/JoshuaLM114/workwood/fileio"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/version"
 	"gopkg.in/yaml.v3"
@@ -68,14 +68,7 @@ func SaveState(path string, st *ProjectState) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	var buf strings.Builder
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(st); err != nil {
-		return err
-	}
-	enc.Close()
-	return os.WriteFile(path, []byte(buf.String()), 0o644)
+	return fileio.WriteYAML(path, st)
 }
 
 // FeatureByUUID returns a feature's state and whether it exists.

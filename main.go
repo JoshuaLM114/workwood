@@ -20,10 +20,14 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
+
 	"github.com/JoshuaLM114/workwood/action"
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/manifest"
+	"github.com/JoshuaLM114/workwood/models"
 	"github.com/JoshuaLM114/workwood/projectdef"
 	"github.com/JoshuaLM114/workwood/repos"
 	"github.com/JoshuaLM114/workwood/superfeature"
@@ -31,8 +35,6 @@ import (
 	"github.com/JoshuaLM114/workwood/tui"
 	"github.com/JoshuaLM114/workwood/update"
 	"github.com/JoshuaLM114/workwood/version"
-	"github.com/google/uuid"
-	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -124,7 +126,7 @@ func extractProjectFlag(args []string) (string, []string) {
 
 // loadProject locates the super-repo (cwd walk-up or -p path), resolves the data
 // dir, and builds the Config + loads its project definition.
-func loadProject(projectFlag string) (*config.Config, *projectdef.File, error) {
+func loadProject(projectFlag string) (*models.Config, *models.ProjectDef, error) {
 	loc, err := config.LocateProject(projectFlag)
 	if err != nil {
 		return nil, nil, err
@@ -146,7 +148,7 @@ func loadProject(projectFlag string) (*config.Config, *projectdef.File, error) {
 }
 
 // resolveCfg is loadProject when only the Config is needed.
-func resolveCfg(projectFlag string) (*config.Config, error) {
+func resolveCfg(projectFlag string) (*models.Config, error) {
 	cfg, _, err := loadProject(projectFlag)
 	return cfg, err
 }
@@ -269,13 +271,13 @@ func runInit(args []string) error {
 // ensureDef loads the project def, creating it with a fresh UUID when absent and
 // back-filling a missing id/name on an existing one. Returns whether it wrote the
 // committed file (so the caller can nudge the user to commit it).
-func ensureDef(root string) (*projectdef.File, bool, error) {
+func ensureDef(root string) (*models.ProjectDef, bool, error) {
 	defPath := filepath.Join(root, config.ProjectDefName)
 	if _, err := os.Stat(defPath); os.IsNotExist(err) {
-		pd := &projectdef.File{
+		pd := &models.ProjectDef{
 			ID:    uuid.NewString(),
 			Name:  filepath.Base(root),
-			Repos: []projectdef.Repo{},
+			Repos: []models.Repo{},
 		}
 		if err := projectdef.Save(defPath, pd); err != nil {
 			return nil, false, err
@@ -402,7 +404,7 @@ func runAction(projectFlag string, args []string) error {
 		return err
 	}
 
-	var override targetcfg.Set
+	var override models.Set
 	if tf := flags["targets"]; tf != "" {
 		override, err = loadTargetsArg(cfg, tf)
 		if err != nil {
@@ -422,13 +424,13 @@ func runAction(projectFlag string, args []string) error {
 
 // loadTargetsArg resolves a --targets value: a preset name (in the targets dir)
 // or, when it looks like a path, a literal YAML file of key→path.
-func loadTargetsArg(cfg *config.Config, arg string) (targetcfg.Set, error) {
+func loadTargetsArg(cfg *models.Config, arg string) (models.Set, error) {
 	if strings.ContainsAny(arg, "/.") {
 		data, err := os.ReadFile(arg)
 		if err != nil {
 			return nil, err
 		}
-		set := targetcfg.Set{}
+		set := models.Set{}
 		if err := yaml.Unmarshal(data, &set); err != nil {
 			return nil, i18n.Errw(err, "err.parse_file", arg)
 		}
@@ -756,7 +758,7 @@ func runFeature(projectFlag string, args []string) error {
 // runDoctor reports + resolves a feature's manifest↔disk desyncs: orphan worktrees
 // (on disk, untracked) and missing ones (tracked, no checkout). With no flags it
 // asks per item; --adopt / --remove-orphans / --rebuild / --drop run non-interactively.
-func runDoctor(cfg *config.Config, args []string) error {
+func runDoctor(cfg *models.Config, args []string) error {
 	pos, flags := splitFlags(args)
 	feat, err := featureArg(cfg, firstPos(pos), "err.usage_sf_doctor")
 	if err != nil {
@@ -864,7 +866,7 @@ func nz(s string) string {
 
 // renameFeature sets a super-feature's local active_name (keyed by its UUID),
 // leaving the slug — and therefore the manifest filename + branches — untouched.
-func renameFeature(cfg *config.Config, slug, newName string) error {
+func renameFeature(cfg *models.Config, slug, newName string) error {
 	m, err := manifest.Load(cfg.ManifestPath(slug))
 	if err != nil {
 		return err
@@ -936,7 +938,7 @@ func firstNonEmpty(vals ...string) string {
 // featureArg resolves which feature a command acts on: the explicit positional if
 // given, else the active feature implied by running inside a feature folder
 // (cfg.ActiveFeature). Errors with usageKey when neither is available.
-func featureArg(cfg *config.Config, explicit, usageKey string) (string, error) {
+func featureArg(cfg *models.Config, explicit, usageKey string) (string, error) {
 	if explicit != "" {
 		return explicit, nil
 	}

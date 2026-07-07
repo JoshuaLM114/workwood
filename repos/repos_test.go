@@ -6,8 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/JoshuaLM114/workwood/config"
-	"github.com/JoshuaLM114/workwood/projectdef"
+	"github.com/JoshuaLM114/workwood/models"
 )
 
 // gitIn runs a git command in dir, failing the test on error.
@@ -100,8 +99,8 @@ func TestAheadBehindAndOutOfSync(t *testing.T) {
 
 	// Upstream advances; FetchAll should surface that we're 1 behind.
 	gitIn(t, up, "commit", "-q", "--allow-empty", "-m", "B")
-	cfg := &config.Config{MainDir: mainDir}
-	pd := &projectdef.File{Repos: []projectdef.Repo{{Name: "svc"}}}
+	cfg := &models.Config{MainDir: mainDir}
+	pd := &models.ProjectDef{Repos: []models.Repo{{Name: "svc"}}}
 	FetchAll(cfg, pd)
 
 	if si := AheadBehind(base); si.Behind != 1 || !si.OutOfSync() {

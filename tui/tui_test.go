@@ -5,20 +5,23 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/JoshuaLM114/workwood/config"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/JoshuaLM114/workwood/config"
+	"github.com/JoshuaLM114/workwood/models"
+	"github.com/JoshuaLM114/workwood/tui/menus"
 )
 
 // brokenFeatureLinks flags built features with a missing/stale back-link, and
 // skips features that aren't built yet.
 func TestBrokenFeatureLinks(t *testing.T) {
 	dataDir := t.TempDir()
-	cfg := &config.Config{
+	cfg := &models.Config{
 		Root: t.TempDir(), DataDir: dataDir, ProjectID: "pid",
 		FeaturesDir: filepath.Join(dataDir, "features"),
 		StateFile:   filepath.Join(dataDir, config.StateFileName),
 	}
-	st := &config.ProjectState{Project: "pid", Features: map[string]config.FeatureState{}}
+	st := &models.ProjectState{Project: "pid", Features: map[string]models.FeatureState{}}
 	st.EnsureFeature("u", "voice")
 	if err := config.SaveState(cfg.StateFile, st); err != nil {
 		t.Fatal(err)
@@ -52,11 +55,19 @@ func TestBrokenFeatureLinks(t *testing.T) {
 	}
 }
 
+// newMenuModel builds a root Model parked on the menu with a usable cfg, mirroring
+// how Run wires the menu sub-model up.
+func newMenuModel() *Model {
+	m := &Model{cfg: &models.Config{}, screen: screenMenu}
+	m.menu = menus.NewMenu(m.ctx(), menus.Notices{})
+	return m
+}
+
 // TestWindowSizeOnMenuNoPanic guards the startup crash where a WindowSizeMsg
 // arrived while sitting on the root menu — the features list isn't built yet, so
 // sizing it must be skipped rather than dereferencing a zero list.Model.
 func TestWindowSizeOnMenuNoPanic(t *testing.T) {
-	m := &Model{screen: screenMenu}
+	m := newMenuModel()
 	// Would panic before the nil-guard on m.features.
 	m.Update(tea.WindowSizeMsg{Width: 207, Height: 51})
 	if m.width != 207 || m.height != 51 {
@@ -66,9 +77,10 @@ func TestWindowSizeOnMenuNoPanic(t *testing.T) {
 
 // TestMenuNavNoPanic exercises arrow-key navigation on the root menu.
 func TestMenuNavNoPanic(t *testing.T) {
-	m := &Model{screen: screenMenu}
+	m := newMenuModel()
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
-	for range menuOrder {
+	// Walk past the bottom of the menu (3 entries) and back up one.
+	for i := 0; i < 3; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
 	m.Update(tea.KeyMsg{Type: tea.KeyUp})

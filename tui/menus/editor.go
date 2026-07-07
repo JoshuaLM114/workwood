@@ -1,20 +1,30 @@
-package tui
+package menus
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
-	"github.com/JoshuaLM114/workwood/config"
-	"github.com/JoshuaLM114/workwood/gitx"
-	"github.com/JoshuaLM114/workwood/i18n"
-	"github.com/JoshuaLM114/workwood/manifest"
-	"github.com/JoshuaLM114/workwood/repos"
-	"github.com/JoshuaLM114/workwood/superfeature"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
+
+	"github.com/JoshuaLM114/workwood/config"
+	"github.com/JoshuaLM114/workwood/i18n"
+	"github.com/JoshuaLM114/workwood/libs/gitx"
+	"github.com/JoshuaLM114/workwood/manifest"
+	"github.com/JoshuaLM114/workwood/models"
+	"github.com/JoshuaLM114/workwood/repos"
+	"github.com/JoshuaLM114/workwood/superfeature"
+	"github.com/JoshuaLM114/workwood/tui/components"
 )
+
+// pathExists reports whether a filesystem path exists.
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
 
 // formMode tracks which huh modal (if any) is open over the editor.
 type formMode int
@@ -46,7 +56,7 @@ const (
 // selected row maps back to an action.
 type editorRow struct {
 	kind       rowKind
-	wt         manifest.Worktree    // rowExisting
+	wt         models.Worktree      // rowExisting
 	add        superfeature.AddSpec // rowStagedAdd
 	addBranch  string               // rowStagedAdd: previewed full branch
 	checkedOut bool                 // rowExisting
@@ -54,16 +64,16 @@ type editorRow struct {
 	prune      bool                 // rowExisting: also delete branch on save
 }
 
-// editorModel is the malleable feature editor. It loads a feature's current
+// EditorModel is the malleable feature editor. It loads a feature's current
 // worktrees, lets the user stage additions and removals (and edit the name +
 // description), then applies the whole delta at once on save. Targets are edited
 // separately on the Actions screen (opened with `o`).
-type editorModel struct {
-	m      *Model
+type EditorModel struct {
+	ctx    Ctx
 	name   string // feature slug (immutable handle)
 	active string // active_name (display)
 
-	man   *manifest.Manifest
+	man   *models.Manifest
 	desc  string
 	rows  []editorRow
 	table table.Model
@@ -83,7 +93,7 @@ type editorModel struct {
 
 // enterBusy switches the editor into its loading screen (status = what's happening)
 // and starts the spinner alongside the async cmd.
-func (e *editorModel) enterBusy(status string, cmd tea.Cmd) tea.Cmd {
+func (e *EditorModel) enterBusy(status string, cmd tea.Cmd) tea.Cmd {
 	e.busy = true
 	e.status = status
 	return tea.Batch(e.spinner.Tick, cmd)
@@ -91,8 +101,8 @@ func (e *editorModel) enterBusy(status string, cmd tea.Cmd) tea.Cmd {
 
 // checkDesync refreshes the manifest↔disk diagnosis (best-effort; nil/clean when in
 // sync). Cheap: a dir scan + a stat per worktree.
-func (e *editorModel) checkDesync() {
-	d, err := superfeature.Diagnose(e.m.cfg, e.m.pd, e.name)
+func (e *EditorModel) checkDesync() {
+	d, err := superfeature.Diagnose(e.ctx.Cfg, e.ctx.Pd, e.name)
 	if err != nil || d.OK() {
 		e.desync = nil
 		return
@@ -100,26 +110,26 @@ func (e *editorModel) checkDesync() {
 	e.desync = d
 }
 
-// newEditorModel loads the feature (by slug) and builds its table.
-func newEditorModel(m *Model, slug string) (*editorModel, error) {
-	man, err := manifest.Load(m.cfg.ManifestPath(slug))
+// NewEditor loads the feature (by slug) and builds its table.
+func NewEditor(ctx Ctx, slug string) (*EditorModel, error) {
+	man, err := manifest.Load(ctx.Cfg.ManifestPath(slug))
 	if err != nil {
 		return nil, err
 	}
 	active := slug
 	if man.ID != "" {
-		if ps, err := config.LoadState(m.cfg.StateFile); err == nil {
+		if ps, err := config.LoadState(ctx.Cfg.StateFile); err == nil {
 			if fs, ok := ps.FeatureByUUID(man.ID); ok {
 				active = fs.DisplayName()
 			}
 		}
 	}
-	e := &editorModel{m: m, name: slug, active: active, man: man, desc: man.Description}
+	e := &EditorModel{ctx: ctx, name: slug, active: active, man: man, desc: man.Description}
 	e.table = table.New(
-		table.WithColumns(editorColumns(m.width)),
+		table.WithColumns(editorColumns(ctx.Width)),
 		table.WithFocused(true),
 	)
-	e.table.SetStyles(tableStyles())
+	e.table.SetStyles(components.TableStyles())
 	e.rebuildRows()
 	e.checkDesync()
 	e.spinner = spinner.New(spinner.WithSpinner(spinner.Dot))
@@ -140,7 +150,7 @@ func editorColumns(width int) []table.Column {
 }
 
 // dirty reports whether there are unsaved staged changes.
-func (e *editorModel) dirty() bool {
+func (e *EditorModel) dirty() bool {
 	if e.desc != e.man.Description {
 		return true
 	}
@@ -154,7 +164,7 @@ func (e *editorModel) dirty() bool {
 
 // rebuildRows recomputes the editor rows from the manifest + staged state and
 // feeds them to the table, preserving any existing staged adds/removes.
-func (e *editorModel) rebuildRows() {
+func (e *EditorModel) rebuildRows() {
 	staged := []editorRow{}
 	removing := map[string]editorRow{}
 	for _, r := range e.rows {
@@ -168,7 +178,7 @@ func (e *editorModel) rebuildRows() {
 	rows := make([]editorRow, 0, len(e.man.Worktrees)+len(staged))
 	for _, w := range e.man.Worktrees {
 		row := editorRow{kind: rowExisting, wt: w}
-		if pathExists(e.m.cfg.Abs(w.Path)) {
+		if pathExists(e.ctx.Cfg.Abs(w.Path)) {
 			row.checkedOut = true
 		}
 		if prev, ok := removing[w.Repo+"\x00"+w.Branch]; ok {
@@ -187,7 +197,7 @@ func (e *editorModel) rebuildRows() {
 	e.table.SetRows(tr)
 }
 
-func (e *editorModel) tableRow(r editorRow) table.Row {
+func (e *EditorModel) tableRow(r editorRow) table.Row {
 	switch r.kind {
 	case rowStagedAdd:
 		return table.Row{"+ add", r.add.Repo, r.addBranch, orDash(r.add.From)}
@@ -206,14 +216,14 @@ func (e *editorModel) tableRow(r editorRow) table.Row {
 	}
 }
 
-func (e *editorModel) setSize(w, h int) {
+func (e *EditorModel) SetSize(w, h int) {
 	e.width, e.height = w, h
 	e.table.SetColumns(editorColumns(w))
 	e.table.SetWidth(w)
 	e.table.SetHeight(max(3, h-9))
 }
 
-func (e *editorModel) Update(msg tea.Msg) (*editorModel, tea.Cmd) {
+func (e *EditorModel) Update(msg tea.Msg) (*EditorModel, tea.Cmd) {
 	// A huh modal, when open, owns input — EXCEPT esc (cancel back to the editor)
 	// and ctrl+c (quit), so the user is never locked inside a form.
 	if e.form != nil {
@@ -253,7 +263,7 @@ func (e *editorModel) Update(msg tea.Msg) (*editorModel, tea.Cmd) {
 	case editorBranchesMsg:
 		e.busy = false
 		if len(msg.branches) == 0 {
-			e.status = warnStyle.Render(i18n.T("tui.status.no_branches", msg.repo))
+			e.status = components.WarnStyle.Render(i18n.T("tui.status.no_branches", msg.repo))
 			return e, nil
 		}
 		e.form = newAddExistingForm(msg.branches, &e.addVals).WithWidth(min(72, e.width-2))
@@ -271,11 +281,11 @@ func (e *editorModel) Update(msg tea.Msg) (*editorModel, tea.Cmd) {
 	case upDoneMsg:
 		e.busy = false
 		if msg.err != nil {
-			e.status = errStyle.Render(i18n.T("tui.status.rebuild_failed", msg.err.Error()))
+			e.status = components.ErrStyle.Render(i18n.T("tui.status.rebuild_failed", msg.err.Error()))
 			return e, nil
 		}
 		e.rebuildRows()
-		e.status = okStyle.Render(i18n.T("tui.status.rebuilt", len(msg.log)))
+		e.status = components.OkStyle.Render(i18n.T("tui.status.rebuilt", len(msg.log)))
 		return e, nil
 
 	case tea.KeyMsg:
@@ -286,7 +296,7 @@ func (e *editorModel) Update(msg tea.Msg) (*editorModel, tea.Cmd) {
 		case "q", "ctrl+c":
 			return e, tea.Quit
 		case "esc":
-			return e, func() tea.Msg { return backMsg{} }
+			return e, func() tea.Msg { return BackMsg{} }
 		case "a":
 			e.openAddForm()
 			return e, e.form.Init()
@@ -301,14 +311,14 @@ func (e *editorModel) Update(msg tea.Msg) (*editorModel, tea.Cmd) {
 			return e, nil
 		case "o":
 			slug := e.name
-			return e, func() tea.Msg { return openActionsMsg{feature: slug} }
+			return e, func() tea.Msg { return OpenActionsMsg{Feature: slug} }
 		case "D":
 			if e.desync == nil {
-				e.status = okStyle.Render(i18n.T("tui.editor.in_sync"))
+				e.status = components.OkStyle.Render(i18n.T("tui.editor.in_sync"))
 				return e, nil
 			}
 			slug := e.name
-			return e, func() tea.Msg { return openReconcileMsg{feature: slug} }
+			return e, func() tea.Msg { return OpenReconcileMsg{Feature: slug} }
 		case "s":
 			if !e.dirty() {
 				e.status = i18n.T("tui.status.nothing")
@@ -326,7 +336,7 @@ func (e *editorModel) Update(msg tea.Msg) (*editorModel, tea.Cmd) {
 }
 
 // toggleRemove flips removal staging on the selected row.
-func (e *editorModel) toggleRemove(prune bool) {
+func (e *EditorModel) toggleRemove(prune bool) {
 	i := e.table.Cursor()
 	if i < 0 || i >= len(e.rows) {
 		return
@@ -349,7 +359,7 @@ func (e *editorModel) toggleRemove(prune bool) {
 }
 
 // syncTable re-renders table rows from e.rows without reloading the manifest.
-func (e *editorModel) syncTable() {
+func (e *EditorModel) syncTable() {
 	tr := make([]table.Row, 0, len(e.rows))
 	for _, r := range e.rows {
 		tr = append(tr, e.tableRow(r))
@@ -357,23 +367,23 @@ func (e *editorModel) syncTable() {
 	e.table.SetRows(tr)
 }
 
-func (e *editorModel) openAddForm() {
+func (e *EditorModel) openAddForm() {
 	e.addVals = addVals{}
-	e.form = newAddModeForm(e.m.pd.Names(), &e.addVals).WithWidth(min(72, e.width-2))
+	e.form = newAddModeForm(e.ctx.Pd.Names(), &e.addVals).WithWidth(min(72, e.width-2))
 	e.formMode = formAddMode
 }
 
 // fetchBranchesCmd refreshes a repo's remote refs then lists its branches, so the
 // "from existing" dropdown reflects teammates' pushed branches.
-func (e *editorModel) fetchBranchesCmd(repo string) tea.Cmd {
-	base := e.m.cfg.BaseRepo(repo)
+func (e *EditorModel) fetchBranchesCmd(repo string) tea.Cmd {
+	base := e.ctx.Cfg.BaseRepo(repo)
 	return func() tea.Msg {
 		gitx.Fetch(base)
 		return editorBranchesMsg{repo: repo, branches: repos.Branches(base)}
 	}
 }
 
-func (e *editorModel) openMetaForm() {
+func (e *EditorModel) openMetaForm() {
 	e.metaVals = metaVals{name: e.active, desc: e.desc}
 	e.form = newMetaForm(&e.metaVals).WithWidth(min(72, e.width-2))
 	e.formMode = formMeta
@@ -381,11 +391,11 @@ func (e *editorModel) openMetaForm() {
 
 // applyRename persists a new active_name locally (keyed by the feature UUID). It
 // changes only the display label — never the slug, manifest filename, or branches.
-func (e *editorModel) applyRename(newName string) {
+func (e *EditorModel) applyRename(newName string) {
 	if newName == "" || e.man.ID == "" || newName == e.active {
 		return
 	}
-	st, err := config.LoadState(e.m.cfg.StateFile)
+	st, err := config.LoadState(e.ctx.Cfg.StateFile)
 	if err != nil {
 		return
 	}
@@ -393,7 +403,7 @@ func (e *editorModel) applyRename(newName string) {
 	f := st.Features[e.man.ID]
 	f.Name = newName
 	st.Features[e.man.ID] = f
-	if config.SaveState(e.m.cfg.StateFile, st) == nil {
+	if config.SaveState(e.ctx.Cfg.StateFile, st) == nil {
 		e.active = newName
 	}
 }
@@ -401,7 +411,7 @@ func (e *editorModel) applyRename(newName string) {
 // onFormDone reads back the completed form and applies the result — or advances to
 // the next phase. It returns any follow-up command (a phase-2 form's Init, or the
 // branch fetch for "from existing").
-func (e *editorModel) onFormDone() tea.Cmd {
+func (e *EditorModel) onFormDone() tea.Cmd {
 	switch e.formMode {
 	case formAddMode:
 		if e.addVals.fromExisting {
@@ -439,7 +449,7 @@ func (e *editorModel) onFormDone() tea.Cmd {
 }
 
 // stageAdd appends a staged worktree-add row from a resolved spec.
-func (e *editorModel) stageAdd(add superfeature.AddSpec) {
+func (e *EditorModel) stageAdd(add superfeature.AddSpec) {
 	e.rows = append(e.rows, editorRow{
 		kind:      rowStagedAdd,
 		add:       add,
@@ -450,7 +460,7 @@ func (e *editorModel) stageAdd(add superfeature.AddSpec) {
 }
 
 // applyCmd runs the staged delta off the event loop.
-func (e *editorModel) applyCmd() tea.Cmd {
+func (e *EditorModel) applyCmd() tea.Cmd {
 	name := e.name
 	desc := e.desc
 	var adds []superfeature.AddSpec
@@ -467,15 +477,15 @@ func (e *editorModel) applyCmd() tea.Cmd {
 			})
 		}
 	}
-	cfg, pd := e.m.cfg, e.m.pd
+	cfg, pd := e.ctx.Cfg, e.ctx.Pd
 	return func() tea.Msg {
 		res, err := superfeature.ApplyEdit(cfg, pd, name, desc, adds, removes)
 		return applyDoneMsg{res: res, err: err}
 	}
 }
 
-func (e *editorModel) upCmd() tea.Cmd {
-	cfg, name := e.m.cfg, e.name
+func (e *EditorModel) upCmd() tea.Cmd {
+	cfg, name := e.ctx.Cfg, e.name
 	return func() tea.Msg {
 		// nil onNew: auto-create new local branches. The editor runs off the event
 		// loop and can't prompt mid-rebuild; in the editor you own the feature, so
@@ -490,10 +500,10 @@ func (e *editorModel) upCmd() tea.Cmd {
 // succeeded, so we drop staged adds the manifest now contains (they landed) and
 // keep the rest staged to fix + retry. rebuildRows preserves staged adds + remove
 // flags, so the only thing to prune here is the succeeded adds.
-func (e *editorModel) reloadAfterApply(res *superfeature.EditResult, applyErr error) {
-	man, err := manifest.Load(e.m.cfg.ManifestPath(e.name))
+func (e *EditorModel) reloadAfterApply(res *superfeature.EditResult, applyErr error) {
+	man, err := manifest.Load(e.ctx.Cfg.ManifestPath(e.name))
 	if err != nil {
-		e.status = errStyle.Render(i18n.T("tui.status.reload_failed", err.Error()))
+		e.status = components.ErrStyle.Render(i18n.T("tui.status.reload_failed", err.Error()))
 		return
 	}
 	e.man = man
@@ -509,17 +519,17 @@ func (e *editorModel) reloadAfterApply(res *superfeature.EditResult, applyErr er
 	e.rebuildRows()
 	e.checkDesync()
 	if applyErr != nil {
-		e.status = errStyle.Render(i18n.T("tui.status.apply_partial", applyErr.Error()))
+		e.status = components.ErrStyle.Render(i18n.T("tui.status.apply_partial", applyErr.Error()))
 		return
 	}
 	added, removed := 0, 0
 	if res != nil {
 		added, removed = len(res.Added), len(res.Removed)
 	}
-	e.status = okStyle.Render(i18n.T("tui.status.saved", added, removed))
+	e.status = components.OkStyle.Render(i18n.T("tui.status.saved", added, removed))
 }
 
-func (e *editorModel) View() string {
+func (e *EditorModel) View() string {
 	if e.busy {
 		// A dedicated loading screen so it's clear an async op is running (rather
 		// than leaving the prior screen up with a small status line).
@@ -528,7 +538,7 @@ func (e *editorModel) View() string {
 			msg = i18n.T("tui.editor.working")
 		}
 		body := e.spinner.View() + "  " + msg
-		return docStyle.Render(titleStyle.Render(i18n.T("tui.editor.loading")) + "\n\n" + body + "\n\n" + helpStyle.Render(i18n.T("tui.editor.loading_hint")))
+		return components.DocStyle.Render(components.TitleStyle.Render(i18n.T("tui.editor.loading")) + "\n\n" + body + "\n\n" + components.HelpStyle.Render(i18n.T("tui.editor.loading_hint")))
 	}
 
 	if e.form != nil {
@@ -536,11 +546,11 @@ func (e *editorModel) View() string {
 		if e.formMode == formMeta {
 			title = i18n.T("tui.title.edit_desc")
 		}
-		return docStyle.Render(titleStyle.Render(title) + "\n\n" + e.form.View() + "\n" + helpStyle.Render(i18n.T("tui.form_help")))
+		return components.DocStyle.Render(components.TitleStyle.Render(title) + "\n\n" + e.form.View() + "\n" + components.HelpStyle.Render(i18n.T("tui.form_help")))
 	}
 
 	var b strings.Builder
-	header := fmt.Sprintf("%s  %s", titleStyle.Render(e.active), dimStyle.Render(orDash(e.desc)))
+	header := fmt.Sprintf("%s  %s", components.TitleStyle.Render(e.active), components.DimStyle.Render(orDash(e.desc)))
 	b.WriteString(header + "\n\n")
 	b.WriteString(e.table.View() + "\n\n")
 
@@ -548,14 +558,14 @@ func (e *editorModel) View() string {
 		b.WriteString(e.status + "\n")
 	}
 	if e.desync != nil {
-		b.WriteString(warnStyle.Render(i18n.T("tui.editor.desync", len(e.desync.Orphans), len(e.desync.Missing))) + "\n")
+		b.WriteString(components.WarnStyle.Render(i18n.T("tui.editor.desync", len(e.desync.Orphans), len(e.desync.Missing))) + "\n")
 	}
 	dirtyHint := ""
 	if e.dirty() {
-		dirtyHint = warnStyle.Render(i18n.T("tui.unsaved"))
+		dirtyHint = components.WarnStyle.Render(i18n.T("tui.unsaved"))
 	}
-	b.WriteString(helpStyle.Render(i18n.T("tui.help") + dirtyHint))
-	return docStyle.Render(b.String())
+	b.WriteString(components.HelpStyle.Render(i18n.T("tui.help") + dirtyHint))
+	return components.DocStyle.Render(b.String())
 }
 
 func orDash(s string) string {

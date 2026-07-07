@@ -18,16 +18,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/JoshuaLM114/workwood/config"
-	"github.com/JoshuaLM114/workwood/fileio"
-	"github.com/JoshuaLM114/workwood/gitx"
-	"github.com/JoshuaLM114/workwood/manifest"
-	"github.com/JoshuaLM114/workwood/projectdef"
 	"gopkg.in/yaml.v3"
-)
 
-// Set is a target configuration: editable key → absolute path.
-type Set = map[string]string
+	"github.com/JoshuaLM114/workwood/config"
+	"github.com/JoshuaLM114/workwood/libs/fileio"
+	"github.com/JoshuaLM114/workwood/libs/gitx"
+	"github.com/JoshuaLM114/workwood/models"
+)
 
 // Kind classifies a candidate-tree node.
 type Kind int
@@ -59,21 +56,21 @@ func (n Node) Toggleable() bool { return n.Kind != KindServiceParent }
 // ---- preset + working-set persistence -------------------------------------
 
 // PresetsDir is <StateDir>/targets.
-func PresetsDir(cfg *config.Config) string { return filepath.Join(cfg.StateDir, "targets") }
+func PresetsDir(cfg *models.Config) string { return filepath.Join(cfg.StateDir, "targets") }
 
 // PresetPath is the file for a named preset.
-func PresetPath(cfg *config.Config, name string) string {
+func PresetPath(cfg *models.Config, name string) string {
 	return filepath.Join(PresetsDir(cfg), name+".yml")
 }
 
 // PresetExists reports whether a named preset file is already on disk.
-func PresetExists(cfg *config.Config, name string) bool {
+func PresetExists(cfg *models.Config, name string) bool {
 	_, err := os.Stat(PresetPath(cfg, name))
 	return err == nil
 }
 
 // ListPresets returns the saved preset names (file stems), sorted.
-func ListPresets(cfg *config.Config) []string {
+func ListPresets(cfg *models.Config) []string {
 	entries, err := os.ReadDir(PresetsDir(cfg))
 	if err != nil {
 		return nil
@@ -90,12 +87,12 @@ func ListPresets(cfg *config.Config) []string {
 }
 
 // LoadPreset reads a named preset (key → abs path).
-func LoadPreset(cfg *config.Config, name string) (Set, error) {
+func LoadPreset(cfg *models.Config, name string) (models.Set, error) {
 	data, err := os.ReadFile(PresetPath(cfg, name))
 	if err != nil {
 		return nil, err
 	}
-	set := Set{}
+	set := models.Set{}
 	if err := yaml.Unmarshal(data, &set); err != nil {
 		return nil, err
 	}
@@ -103,7 +100,7 @@ func LoadPreset(cfg *config.Config, name string) (Set, error) {
 }
 
 // SavePreset writes a named preset, creating the targets dir as needed.
-func SavePreset(cfg *config.Config, name string, set Set) error {
+func SavePreset(cfg *models.Config, name string, set models.Set) error {
 	if err := os.MkdirAll(PresetsDir(cfg), 0o755); err != nil {
 		return err
 	}
@@ -115,12 +112,12 @@ func SavePreset(cfg *config.Config, name string, set Set) error {
 }
 
 // LoadWorking returns a copy of the feature's persisted working set.
-func LoadWorking(cfg *config.Config, m *manifest.Manifest) (Set, error) {
+func LoadWorking(cfg *models.Config, m *models.Manifest) (models.Set, error) {
 	st, err := config.LoadState(cfg.StateFile)
 	if err != nil {
 		return nil, err
 	}
-	out := Set{}
+	out := models.Set{}
 	for k, v := range st.WorkingSet(m.ID) {
 		out[k] = v
 	}
@@ -131,7 +128,7 @@ func LoadWorking(cfg *config.Config, m *manifest.Manifest) (Set, error) {
 // has any entries, otherwise a freshly-seeded clean set (reference repos + the
 // feature's worktrees). It does NOT persist — edits persist via SaveWorking, so a
 // feature stays on the clean default until the user actually changes something.
-func Working(cfg *config.Config, pd *projectdef.File, m *manifest.Manifest) (Set, error) {
+func Working(cfg *models.Config, pd *models.ProjectDef, m *models.Manifest) (models.Set, error) {
 	ws, err := LoadWorking(cfg, m)
 	if err != nil {
 		return nil, err
@@ -143,7 +140,7 @@ func Working(cfg *config.Config, pd *projectdef.File, m *manifest.Manifest) (Set
 }
 
 // SaveWorking persists the feature's working set.
-func SaveWorking(cfg *config.Config, m *manifest.Manifest, working Set) error {
+func SaveWorking(cfg *models.Config, m *models.Manifest, working models.Set) error {
 	st, err := config.LoadState(cfg.StateFile)
 	if err != nil {
 		return err
@@ -158,8 +155,8 @@ func SaveWorking(cfg *config.Config, m *manifest.Manifest, working Set) error {
 // CleanSet seeds a working set from every reference repo (key = repo name) and
 // the feature's worktrees (key = sub-branch, the branch minus the "<slug>/"
 // prefix). Colliding keys get a numeric suffix.
-func CleanSet(cfg *config.Config, pd *projectdef.File, m *manifest.Manifest) Set {
-	set := Set{}
+func CleanSet(cfg *models.Config, pd *models.ProjectDef, m *models.Manifest) models.Set {
+	set := models.Set{}
 	for _, r := range pd.Repos {
 		addUnique(set, r.Name, cfg.BaseRepo(r.Name))
 	}
@@ -171,12 +168,12 @@ func CleanSet(cfg *config.Config, pd *projectdef.File, m *manifest.Manifest) Set
 
 // Enable adds key→path to working (de-duping the key); a path already present
 // under any key is left as-is.
-func Enable(working Set, key, path string) {
+func Enable(working models.Set, key, path string) {
 	addUnique(working, key, path)
 }
 
 // Disable removes whatever key currently points at path.
-func Disable(working Set, path string) {
+func Disable(working models.Set, path string) {
 	for k, p := range working {
 		if p == path {
 			delete(working, k)
@@ -186,7 +183,7 @@ func Disable(working Set, path string) {
 }
 
 // Rename changes the key for an entry (de-duping the new key).
-func Rename(working Set, oldKey, newKey string) {
+func Rename(working models.Set, oldKey, newKey string) {
 	p, ok := working[oldKey]
 	if !ok || newKey == oldKey || newKey == "" {
 		return
@@ -199,7 +196,7 @@ func Rename(working Set, oldKey, newKey string) {
 // (main/features) but no longer exist on disk — e.g. a worktree that was removed.
 // Arbitrary external paths are kept even if absent (the user may target a dir that
 // doesn't exist yet). Returns the removed keys.
-func Prune(cfg *config.Config, working Set) []string {
+func Prune(cfg *models.Config, working models.Set) []string {
 	var removed []string
 	for k, p := range working {
 		if isManaged(cfg, p) && !pathExists(p) {
@@ -212,7 +209,7 @@ func Prune(cfg *config.Config, working Set) []string {
 }
 
 // Dedup returns key if unused in set, else key-2, key-3, … until free.
-func Dedup(set Set, key string) string {
+func Dedup(set models.Set, key string) string {
 	if _, ok := set[key]; !ok {
 		return key
 	}
@@ -231,7 +228,7 @@ func Dedup(set Set, key string) string {
 // by any enabled working-set path that isn't auto-discovered (user-added). Each
 // node's Toggled/Key reflects the current working set (matched by PATH, so a
 // renamed key still shows as toggled under its working-set name).
-func Candidates(cfg *config.Config, pd *projectdef.File, m *manifest.Manifest, working Set) []Node {
+func Candidates(cfg *models.Config, pd *models.ProjectDef, m *models.Manifest, working models.Set) []Node {
 	byPath := map[string]string{} // abs path → working key
 	for k, p := range working {
 		byPath[p] = k
@@ -286,7 +283,7 @@ func Candidates(cfg *config.Config, pd *projectdef.File, m *manifest.Manifest, w
 // returns serviceName → absolute path: a relative subpath is joined to rootAbs, an
 // absolute one is used as-is. Missing file → (nil, nil). Parse error → (nil, err).
 func ExpandServices(rootAbs string) (map[string]string, error) {
-	p := filepath.Join(rootAbs, config.RepoWorkwoodDirName, "targets.yml")
+	p := filepath.Join(rootAbs, models.RepoWorkwoodDirName, "targets.yml")
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -327,7 +324,7 @@ func AddPath(path string) (key, abs string, needsKey bool) {
 
 // ---- helpers --------------------------------------------------------------
 
-func addUnique(set Set, key, path string) {
+func addUnique(set models.Set, key, path string) {
 	for _, p := range set {
 		if p == path {
 			return // path already targeted under some key
@@ -343,7 +340,7 @@ func subKey(feature, branch string) string {
 	return branch
 }
 
-func isManaged(cfg *config.Config, p string) bool {
+func isManaged(cfg *models.Config, p string) bool {
 	sep := string(os.PathSeparator)
 	return strings.HasPrefix(p, cfg.MainDir+sep) || strings.HasPrefix(p, cfg.FeaturesDir+sep)
 }

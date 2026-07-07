@@ -5,11 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/JoshuaLM114/workwood/fileio"
-	"github.com/JoshuaLM114/workwood/i18n"
-	"github.com/JoshuaLM114/workwood/manifest"
-	"github.com/JoshuaLM114/workwood/projectdef"
 	"github.com/google/uuid"
+
+	"github.com/JoshuaLM114/workwood/i18n"
+	"github.com/JoshuaLM114/workwood/libs/fileio"
+	"github.com/JoshuaLM114/workwood/manifest"
+	"github.com/JoshuaLM114/workwood/models"
 )
 
 // InitResult reports what InitProject scaffolded, for the caller to print.
@@ -25,7 +26,7 @@ type InitResult struct {
 // back-links, and gitignores an in-repo data dir. pd is the already-loaded/created
 // project def; dataDir is the resolved data dir. It performs NO interactive IO, so
 // it is unit-testable end to end (the prompts stay in the caller).
-func InitProject(root string, pd *projectdef.File, dataDir string) (*InitResult, error) {
+func InitProject(root string, pd *models.ProjectDef, dataDir string) (*InitResult, error) {
 	actionsDir := filepath.Join(root, WorkwoodDirName, ActionsDirName)
 	manifestsDir := filepath.Join(root, WorkwoodDirName, ManifestsDirName)
 	if err := os.MkdirAll(actionsDir, 0o755); err != nil {
@@ -116,7 +117,7 @@ func dataDirIgnored(root, dataDir string) error {
 }
 
 // projectSlug is the project's name (workwood.yml name), else the root basename.
-func projectSlug(pd *projectdef.File, root string) string {
+func projectSlug(pd *models.ProjectDef, root string) string {
 	if pd.Name != "" {
 		return pd.Name
 	}

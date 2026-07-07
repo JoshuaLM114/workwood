@@ -7,20 +7,20 @@ import (
 	"testing"
 
 	"github.com/JoshuaLM114/workwood/manifest"
-	"github.com/JoshuaLM114/workwood/projectdef"
+	"github.com/JoshuaLM114/workwood/models"
 )
 
 func TestInitProject(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "data") // inside the repo → should be gitignored
-	pd := &projectdef.File{ID: "proj-uuid", Name: "demo"}
+	pd := &models.ProjectDef{ID: "proj-uuid", Name: "demo"}
 
 	// Pre-place a committed manifest so the tracking/back-fill path runs.
 	mdir := filepath.Join(root, WorkwoodDirName, ManifestsDirName)
 	if err := os.MkdirAll(mdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := manifest.Save(filepath.Join(mdir, "feat.yaml"), &manifest.Manifest{ID: "feat-uuid", Project: pd.ID, Feature: "feat"}); err != nil {
+	if err := manifest.Save(filepath.Join(mdir, "feat.yaml"), &models.Manifest{ID: "feat-uuid", Project: pd.ID, Feature: "feat"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -53,7 +53,7 @@ func TestInitProject(t *testing.T) {
 	}
 
 	// A second run with a DIFFERENT project id must be rejected (identity guard).
-	if _, err := InitProject(root, &projectdef.File{ID: "other"}, dataDir); err == nil {
+	if _, err := InitProject(root, &models.ProjectDef{ID: "other"}, dataDir); err == nil {
 		t.Error("InitProject with mismatched project id = nil, want error")
 	}
 }

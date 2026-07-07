@@ -1,13 +1,15 @@
-package tui
+package menus
 
 import (
 	"strings"
 
-	"github.com/JoshuaLM114/workwood/i18n"
-	"github.com/JoshuaLM114/workwood/manifest"
-	"github.com/JoshuaLM114/workwood/superfeature"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
+
+	"github.com/JoshuaLM114/workwood/i18n"
+	"github.com/JoshuaLM114/workwood/models"
+	"github.com/JoshuaLM114/workwood/superfeature"
+	"github.com/JoshuaLM114/workwood/tui/components"
 )
 
 // reconcile{Orphan,Missing}Vals bind one drift item's chosen resolution.
@@ -16,7 +18,7 @@ type reconcileOrphanVals struct {
 	action string // adopt | remove | skip
 }
 type reconcileMissingVals struct {
-	w      manifest.Worktree
+	w      models.Worktree
 	action string // rebuild | drop | skip
 }
 type reconcileVals struct {
@@ -24,10 +26,10 @@ type reconcileVals struct {
 	missing []reconcileMissingVals
 }
 
-// reconcileModel walks a feature's manifest↔disk drift one item per page, then
+// ReconcileModel walks a feature's manifest↔disk drift one item per page, then
 // applies the chosen fixes and shows a log. Opened from the editor with `D`.
-type reconcileModel struct {
-	m    *Model
+type ReconcileModel struct {
+	ctx  Ctx
 	slug string
 	form *huh.Form
 	vals *reconcileVals
@@ -35,10 +37,10 @@ type reconcileModel struct {
 	log  []string
 }
 
-// newReconcileModel re-diagnoses the feature and builds the walkthrough. Orphans
+// NewReconcile re-diagnoses the feature and builds the walkthrough. Orphans
 // default to Adopt (recover them) unless unidentifiable; missing default to Rebuild.
-func newReconcileModel(m *Model, slug string) (*reconcileModel, error) {
-	d, err := superfeature.Diagnose(m.cfg, m.pd, slug)
+func NewReconcile(ctx Ctx, slug string) (*ReconcileModel, error) {
+	d, err := superfeature.Diagnose(ctx.Cfg, ctx.Pd, slug)
 	if err != nil {
 		return nil, err
 	}
@@ -53,10 +55,13 @@ func newReconcileModel(m *Model, slug string) (*reconcileModel, error) {
 	for _, w := range d.Missing {
 		vals.missing = append(vals.missing, reconcileMissingVals{w: w, action: "rebuild"})
 	}
-	r := &reconcileModel{m: m, slug: slug, vals: vals}
-	r.form = newReconcileForm(vals).WithWidth(min(80, m.width-4))
+	r := &ReconcileModel{ctx: ctx, slug: slug, vals: vals}
+	r.form = newReconcileForm(vals).WithWidth(min(80, ctx.Width-4))
 	return r, nil
 }
+
+// Init starts the walkthrough form.
+func (r *ReconcileModel) Init() tea.Cmd { return r.form.Init() }
 
 func newReconcileForm(v *reconcileVals) *huh.Form {
 	var groups []*huh.Group
@@ -89,7 +94,7 @@ func newReconcileForm(v *reconcileVals) *huh.Form {
 	return form(groups...)
 }
 
-func (r *reconcileModel) Update(msg tea.Msg) (*reconcileModel, tea.Cmd) {
+func (r *ReconcileModel) Update(msg tea.Msg) (*ReconcileModel, tea.Cmd) {
 	if k, ok := msg.(tea.KeyMsg); ok {
 		switch k.String() {
 		case "ctrl+c":
@@ -121,7 +126,7 @@ func (r *reconcileModel) Update(msg tea.Msg) (*reconcileModel, tea.Cmd) {
 }
 
 // execute applies each chosen resolution, collecting a log.
-func (r *reconcileModel) execute() {
+func (r *ReconcileModel) execute() {
 	var plan superfeature.ReconcilePlan
 	for _, ov := range r.vals.orphans {
 		switch ov.action {
@@ -139,9 +144,9 @@ func (r *reconcileModel) execute() {
 			plan.DropMissing = append(plan.DropMissing, mv.w)
 		}
 	}
-	for _, oc := range superfeature.Reconcile(r.m.cfg, r.slug, plan) {
+	for _, oc := range superfeature.Reconcile(r.ctx.Cfg, r.slug, plan) {
 		if oc.Err != nil {
-			r.log = append(r.log, errStyle.Render(oc.Err.Error()))
+			r.log = append(r.log, components.ErrStyle.Render(oc.Err.Error()))
 		} else {
 			r.log = append(r.log, oc.Msg)
 		}
@@ -152,13 +157,13 @@ func (r *reconcileModel) execute() {
 }
 
 // back rebuilds + shows the editor (reflecting adopted/rebuilt worktrees).
-func (r *reconcileModel) back() tea.Msg { return openEditorMsg{feature: r.slug} }
+func (r *ReconcileModel) back() tea.Msg { return OpenEditorMsg{Feature: r.slug} }
 
-func (r *reconcileModel) View() string {
-	title := titleStyle.Render(i18n.T("tui.reconcile.title", r.slug))
+func (r *ReconcileModel) View() string {
+	title := components.TitleStyle.Render(i18n.T("tui.reconcile.title", r.slug))
 	if r.done {
-		body := okStyle.Render(i18n.T("tui.reconcile.done")) + "\n\n" + strings.Join(r.log, "\n")
-		return docStyle.Render(title + "\n\n" + body + "\n\n" + helpStyle.Render(i18n.T("tui.reconcile.return")))
+		body := components.OkStyle.Render(i18n.T("tui.reconcile.done")) + "\n\n" + strings.Join(r.log, "\n")
+		return components.DocStyle.Render(title + "\n\n" + body + "\n\n" + components.HelpStyle.Render(i18n.T("tui.reconcile.return")))
 	}
-	return docStyle.Render(title + "\n\n" + r.form.View() + "\n" + helpStyle.Render(i18n.T("tui.reconcile.help")))
+	return components.DocStyle.Render(title + "\n\n" + r.form.View() + "\n" + components.HelpStyle.Render(i18n.T("tui.reconcile.help")))
 }

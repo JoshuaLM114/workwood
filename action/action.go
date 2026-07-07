@@ -27,10 +27,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/JoshuaLM114/workwood/config"
-	"github.com/JoshuaLM114/workwood/fileio"
-	"github.com/JoshuaLM114/workwood/i18n"
 	"gopkg.in/yaml.v3"
+
+	"github.com/JoshuaLM114/workwood/i18n"
+	"github.com/JoshuaLM114/workwood/libs/fileio"
+	"github.com/JoshuaLM114/workwood/models"
 )
 
 // Action is a discovered action: its filename, the optional marker label, and
@@ -77,7 +78,7 @@ func scanScript(path string) (desc string, marked, hasRun, hasValidate, hasInit 
 
 // Find returns the path of a discovered action named name (executable + marker),
 // or "". It does NOT require Run/Validate — that's surfaced as availability.
-func Find(cfg *config.Config, name string) string {
+func Find(cfg *models.Config, name string) string {
 	p := filepath.Join(cfg.ActionsDir, name)
 	if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
 		if _, marked, _, _, _ := scanScript(p); marked {
@@ -90,7 +91,7 @@ func Find(cfg *config.Config, name string) string {
 // Scan inspects the actions dir once and returns the discovered actions (marked +
 // executable, each flagged for Run/Validate) plus the names of marked files that
 // AREN'T executable — a common mistake worth reporting.
-func Scan(cfg *config.Config) (actions []Action, needChmod []string) {
+func Scan(cfg *models.Config) (actions []Action, needChmod []string) {
 	entries, err := os.ReadDir(cfg.ActionsDir)
 	if err != nil {
 		return nil, nil
@@ -119,13 +120,13 @@ func Scan(cfg *config.Config) (actions []Action, needChmod []string) {
 }
 
 // List returns the marked, executable actions available to a project, sorted.
-func List(cfg *config.Config) []Action {
+func List(cfg *models.Config) []Action {
 	actions, _ := Scan(cfg)
 	return actions
 }
 
 // Names returns just the action names (for messages).
-func Names(cfg *config.Config) []string {
+func Names(cfg *models.Config) []string {
 	as := List(cfg)
 	names := make([]string, len(as))
 	for i, a := range as {
@@ -138,7 +139,7 @@ func Names(cfg *config.Config) []string {
 // prepared *exec.Cmd that SOURCES the action and calls one function (fn is "Run"
 // or "Validate"). It errors if the action lacks that function. fn is an internal
 // constant (never user input), so interpolating it into bash -c is safe.
-func invoke(cfg *config.Config, slug, name, fn string, set, vars map[string]string) (*exec.Cmd, error) {
+func invoke(cfg *models.Config, slug, name, fn string, set, vars map[string]string) (*exec.Cmd, error) {
 	path := Find(cfg, name)
 	if path == "" {
 		avail := Names(cfg)
@@ -189,7 +190,7 @@ func invoke(cfg *config.Config, slug, name, fn string, set, vars map[string]stri
 // without executing it — the caller runs it (Run for the CLI; tea.ExecProcess for
 // the TUI, which must release the terminal so a tmux action can take over). An
 // action must define BOTH Run and Validate to be runnable.
-func Command(cfg *config.Config, slug, name string, set, vars map[string]string) (*exec.Cmd, error) {
+func Command(cfg *models.Config, slug, name string, set, vars map[string]string) (*exec.Cmd, error) {
 	if path := Find(cfg, name); path != "" {
 		if _, _, _, hasValidate, _ := scanScript(path); !hasValidate {
 			return nil, i18n.Err("err.action_missing_method", name, "Validate")
@@ -202,7 +203,7 @@ func Command(cfg *config.Config, slug, name string, set, vars map[string]string)
 // files the action needs in the currently-selected targets (idempotent: a re-run
 // no-ops). Captured; returns the combined output + error. Errors clearly if the
 // action defines no Init.
-func Init(cfg *config.Config, slug, name string, set, vars map[string]string) (string, error) {
+func Init(cfg *models.Config, slug, name string, set, vars map[string]string) (string, error) {
 	cmd, err := invoke(cfg, slug, name, "Init", set, vars)
 	if err != nil {
 		return "", err
@@ -214,7 +215,7 @@ func Init(cfg *config.Config, slug, name string, set, vars map[string]string) (s
 // Validate runs the action's Validate function against the targets as a pre-flight
 // availability check, captured (no terminal hand-off). It returns nil when the
 // action reports it can act on the targets (exit 0), else an error.
-func Validate(cfg *config.Config, slug, name string, set, vars map[string]string) error {
+func Validate(cfg *models.Config, slug, name string, set, vars map[string]string) error {
 	cmd, err := invoke(cfg, slug, name, "Validate", set, vars)
 	if err != nil {
 		return err
@@ -227,7 +228,7 @@ func Validate(cfg *config.Config, slug, name string, set, vars map[string]string
 }
 
 // Run prepares and runs an action with inherited stdio (the CLI path).
-func Run(cfg *config.Config, slug, name string, set, vars map[string]string) error {
+func Run(cfg *models.Config, slug, name string, set, vars map[string]string) error {
 	cmd, err := Command(cfg, slug, name, set, vars)
 	if err != nil {
 		return err

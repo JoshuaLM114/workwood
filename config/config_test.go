@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/JoshuaLM114/workwood/projectdef"
+	"github.com/JoshuaLM114/workwood/models"
 )
 
 func TestFindProject(t *testing.T) {
@@ -37,7 +37,7 @@ func TestFindProjectViaFeatureLink(t *testing.T) {
 	}
 	dataDir := t.TempDir()
 	featDir := filepath.Join(dataDir, "features", "voice")
-	cfg := &Config{Root: superRepo, DataDir: dataDir, ProjectID: "pid", FeaturesDir: filepath.Join(dataDir, "features")}
+	cfg := &models.Config{Root: superRepo, DataDir: dataDir, ProjectID: "pid", FeaturesDir: filepath.Join(dataDir, "features")}
 	if err := WriteFeatureLink(cfg, "voice"); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestLocateProjectViaLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	dataDir := t.TempDir()
-	cfg := &Config{Root: superRepo, DataDir: dataDir, ProjectID: "pid", FeaturesDir: filepath.Join(dataDir, "features")}
+	cfg := &models.Config{Root: superRepo, DataDir: dataDir, ProjectID: "pid", FeaturesDir: filepath.Join(dataDir, "features")}
 	if err := WriteFeatureLink(cfg, "voice"); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestEnsureFeatureLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	dataDir := t.TempDir()
-	cfg := &Config{Root: superRepo, DataDir: dataDir, ProjectID: "pid", FeaturesDir: filepath.Join(dataDir, "features")}
+	cfg := &models.Config{Root: superRepo, DataDir: dataDir, ProjectID: "pid", FeaturesDir: filepath.Join(dataDir, "features")}
 
 	// Missing → regenerated, then valid.
 	if regen, err := EnsureFeatureLink(cfg, "voice"); err != nil || !regen {
@@ -110,7 +110,7 @@ func TestEnsureFeatureLink(t *testing.T) {
 	}
 
 	// Inconsistent (super-repo moved) → invalid → regenerated for the new config.
-	moved := &Config{Root: t.TempDir(), DataDir: dataDir, ProjectID: "pid", FeaturesDir: cfg.FeaturesDir}
+	moved := &models.Config{Root: t.TempDir(), DataDir: dataDir, ProjectID: "pid", FeaturesDir: cfg.FeaturesDir}
 	if FeatureLinkValid(moved, "voice") {
 		t.Fatal("a link pointing elsewhere should be invalid for the moved config")
 	}
@@ -131,7 +131,7 @@ func TestEnsureFeatureLink(t *testing.T) {
 func TestBuildDefaults(t *testing.T) {
 	t.Setenv(EnvHome, t.TempDir())
 	data := t.TempDir()
-	pd := &projectdef.File{ID: "pid", Name: "myslug"}
+	pd := &models.ProjectDef{ID: "pid", Name: "myslug"}
 
 	cfg, err := Build("/some/super-repo", pd, data)
 	if err != nil {
@@ -154,9 +154,9 @@ func TestBuildDefaults(t *testing.T) {
 func TestBuildUsesStateName(t *testing.T) {
 	t.Setenv(EnvHome, t.TempDir())
 	data := t.TempDir()
-	pd := &projectdef.File{ID: "pid", Name: "myslug"}
+	pd := &models.ProjectDef{ID: "pid", Name: "myslug"}
 	stFile := filepath.Join(data, StateFileName)
-	if err := SaveState(stFile, &ProjectState{Project: "pid", Name: "Custom"}); err != nil {
+	if err := SaveState(stFile, &models.ProjectState{Project: "pid", Name: "Custom"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -177,9 +177,9 @@ func TestBuildUsesStateName(t *testing.T) {
 func TestBuildIdentityMismatch(t *testing.T) {
 	t.Setenv(EnvHome, t.TempDir())
 	data := t.TempDir()
-	pd := &projectdef.File{ID: "pid", Name: "myslug"}
+	pd := &models.ProjectDef{ID: "pid", Name: "myslug"}
 	stFile := filepath.Join(data, StateFileName)
-	if err := SaveState(stFile, &ProjectState{Project: "a-different-uuid"}); err != nil {
+	if err := SaveState(stFile, &models.ProjectState{Project: "a-different-uuid"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Build("/some/super-repo", pd, data); err == nil {

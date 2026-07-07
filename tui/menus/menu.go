@@ -1,11 +1,13 @@
-package tui
+package menus
 
 import (
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/JoshuaLM114/workwood/tui/components"
 )
 
 // menuChoice is a top-level menu entry.
@@ -21,10 +23,24 @@ const (
 // settings (edit-project sits directly above settings).
 var menuOrder = []menuChoice{menuFeatures, menuProject, menuSettings}
 
-// menuModel is the root navigation menu.
-type menuModel struct{ cursor int }
+// MenuModel is the root navigation menu. It owns the boot notices (sync warning +
+// feature back-link state) and can repair flagged links in place.
+type MenuModel struct {
+	ctx     Ctx
+	notices Notices
+	cursor  int
+}
 
-func (mm menuModel) update(m *Model, msg tea.Msg) (menuModel, tea.Cmd) {
+// NewMenu builds the root menu from the shared ctx and the on-boot notices.
+func NewMenu(ctx Ctx, n Notices) MenuModel {
+	return MenuModel{ctx: ctx, notices: n}
+}
+
+// SetNotices replaces the menu's boot notices (the root calls this when the async
+// boot health check lands after the menu already exists).
+func (mm *MenuModel) SetNotices(n Notices) { mm.notices = n }
+
+func (mm MenuModel) Update(msg tea.Msg) (MenuModel, tea.Cmd) {
 	if k, ok := msg.(tea.KeyMsg); ok {
 		switch k.String() {
 		case "up", "k":
@@ -38,23 +54,23 @@ func (mm menuModel) update(m *Model, msg tea.Msg) (menuModel, tea.Cmd) {
 		case "enter":
 			switch menuOrder[mm.cursor] {
 			case menuFeatures:
-				return mm, func() tea.Msg { return openFeaturesMsg{} }
+				return mm, func() tea.Msg { return OpenFeaturesMsg{} }
 			case menuProject:
-				return mm, func() tea.Msg { return openReposMsg{} }
+				return mm, func() tea.Msg { return OpenReposMsg{} }
 			case menuSettings:
-				return mm, func() tea.Msg { return openSettingsMsg{} }
+				return mm, func() tea.Msg { return OpenSettingsMsg{} }
 			}
 		case "r":
 			// Repair any feature back-links flagged broken by the boot check.
-			if len(m.brokenLinks) > 0 {
+			if len(mm.notices.BrokenLinks) > 0 {
 				fixed := 0
-				for _, slug := range m.brokenLinks {
-					if _, err := config.EnsureFeatureLink(m.cfg, slug); err == nil {
+				for _, slug := range mm.notices.BrokenLinks {
+					if _, err := config.EnsureFeatureLink(mm.ctx.Cfg, slug); err == nil {
 						fixed++
 					}
 				}
-				m.brokenLinks = nil
-				m.linkNotice = okStyle.Render(i18n.T("tui.menu.links_fixed", fixed))
+				mm.notices.BrokenLinks = nil
+				mm.notices.LinkNotice = components.OkStyle.Render(i18n.T("tui.menu.links_fixed", fixed))
 			}
 		}
 	}
@@ -73,23 +89,23 @@ func menuLabels(c menuChoice) (string, string) {
 	}
 }
 
-func (mm menuModel) View(m *Model) string {
+func (mm MenuModel) View() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(i18n.T("tui.menu.title", m.cfg.ProjectName)) + "\n\n")
+	b.WriteString(components.TitleStyle.Render(i18n.T("tui.menu.title", mm.ctx.Cfg.ProjectName)) + "\n\n")
 	for i, c := range menuOrder {
 		title, desc := menuLabels(c)
 		if i == mm.cursor {
-			b.WriteString(selectedRowStyle.Render("› "+title) + "  " + dimStyle.Render(desc) + "\n")
+			b.WriteString(components.SelectedRowStyle.Render("› "+title) + "  " + components.DimStyle.Render(desc) + "\n")
 		} else {
-			b.WriteString("  " + title + "  " + dimStyle.Render(desc) + "\n")
+			b.WriteString("  " + title + "  " + components.DimStyle.Render(desc) + "\n")
 		}
 	}
-	if m.syncWarning != "" {
-		b.WriteString("\n" + warnStyle.Render(m.syncWarning) + "\n")
+	if mm.notices.SyncWarning != "" {
+		b.WriteString("\n" + components.WarnStyle.Render(mm.notices.SyncWarning) + "\n")
 	}
-	if m.linkNotice != "" {
-		b.WriteString("\n" + m.linkNotice + "\n") // already styled (warn or ok)
+	if mm.notices.LinkNotice != "" {
+		b.WriteString("\n" + mm.notices.LinkNotice + "\n") // already styled (warn or ok)
 	}
-	b.WriteString("\n" + helpStyle.Render(i18n.T("tui.menu.help")))
-	return docStyle.Render(b.String())
+	b.WriteString("\n" + components.HelpStyle.Render(i18n.T("tui.menu.help")))
+	return components.DocStyle.Render(b.String())
 }

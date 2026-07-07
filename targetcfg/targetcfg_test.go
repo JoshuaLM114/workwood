@@ -7,12 +7,11 @@ import (
 	"testing"
 
 	"github.com/JoshuaLM114/workwood/config"
-	"github.com/JoshuaLM114/workwood/manifest"
-	"github.com/JoshuaLM114/workwood/projectdef"
+	"github.com/JoshuaLM114/workwood/models"
 )
 
-func testCfg(dir string) *config.Config {
-	return &config.Config{
+func testCfg(dir string) *models.Config {
+	return &models.Config{
 		MainDir:     filepath.Join(dir, "main"),
 		FeaturesDir: filepath.Join(dir, "features"),
 		StateDir:    dir,
@@ -22,8 +21,8 @@ func testCfg(dir string) *config.Config {
 
 func TestCleanSetAndDedup(t *testing.T) {
 	cfg := testCfg(t.TempDir())
-	pd := &projectdef.File{Repos: []projectdef.Repo{{Name: "api"}, {Name: "web"}}}
-	m := &manifest.Manifest{Feature: "login", Worktrees: []manifest.Worktree{
+	pd := &models.ProjectDef{Repos: []models.Repo{{Name: "api"}, {Name: "web"}}}
+	m := &models.Manifest{Feature: "login", Worktrees: []models.Worktree{
 		{Repo: "api", Branch: "login/api-jwt", Path: "login/api"},
 		{Repo: "web", Branch: "login/web", Path: "login/web"}, // sub-branch "web" collides with the web repo
 	}}
@@ -68,7 +67,7 @@ func TestEnableDisableRename(t *testing.T) {
 
 func TestExpandServices(t *testing.T) {
 	root := t.TempDir()
-	ww := filepath.Join(root, config.RepoWorkwoodDirName)
+	ww := filepath.Join(root, models.RepoWorkwoodDirName)
 	if err := os.MkdirAll(ww, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +94,7 @@ func TestExpandServices(t *testing.T) {
 
 func TestPresetRoundTrip(t *testing.T) {
 	cfg := testCfg(t.TempDir())
-	in := Set{"api": "/a", "web": "/w"}
+	in := models.Set{"api": "/a", "web": "/w"}
 	if err := SavePreset(cfg, "mine", in); err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +112,8 @@ func TestPresetRoundTrip(t *testing.T) {
 
 func TestWorkingRoundTrip(t *testing.T) {
 	cfg := testCfg(t.TempDir())
-	m := &manifest.Manifest{ID: "feat-uuid", Feature: "login"}
-	if err := SaveWorking(cfg, m, Set{"api": "/a"}); err != nil {
+	m := &models.Manifest{ID: "feat-uuid", Feature: "login"}
+	if err := SaveWorking(cfg, m, models.Set{"api": "/a"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := LoadWorking(cfg, m)

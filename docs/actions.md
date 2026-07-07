@@ -53,6 +53,8 @@ A script missing `Run` or `Validate` is shown but **cannot be run** (TUI or CLI)
 
 ## Environment workwood provides
 
+# TODO: Alter this behaviour, I am not a fan of needing to pass via a file.
+
 - `WORKWOOD_TARGETS` — path to a `context.yml`: a YAML `key: /abs/path` map of the
   enabled targets. Parse it with the tiny `key/path` loop above (no `yq`/`jq`).
 - `WORKWOOD_ACTION_DATA` — a private per-feature state **dir** for this action

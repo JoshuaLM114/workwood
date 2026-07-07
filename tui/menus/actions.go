@@ -1,19 +1,19 @@
-package tui
+package menus
 
 import (
 	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 
 	"github.com/JoshuaLM114/workwood/action"
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/manifest"
+	"github.com/JoshuaLM114/workwood/models"
 	"github.com/JoshuaLM114/workwood/targetcfg"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/JoshuaLM114/workwood/tui/components"
 )
-
-var selectedRowStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(lipgloss.Color("63"))
 
 type actionsFormMode int
 
@@ -27,16 +27,16 @@ const (
 	afChooseAction
 )
 
-// actionsModel is the per-feature Actions screen: a toggleable tree of candidate
+// ActionsModel is the per-feature Actions screen: a toggleable tree of candidate
 // targets (reference repos, worktrees, and .workwood/targets.yml services), with
 // add-path / rename / save+load presets, and running an action against the enabled
 // set (the "working set", persisted in workwood-state.yml).
-type actionsModel struct {
-	m    *Model
+type ActionsModel struct {
+	ctx  Ctx
 	slug string
-	man  *manifest.Manifest
+	man  *models.Manifest
 
-	working   targetcfg.Set
+	working   models.Set
 	nodes     []targetcfg.Node
 	visible   []int        // node indices shown given collapse state
 	collapsed map[int]bool // serviceParent node index → collapsed
@@ -62,21 +62,21 @@ type actionsModel struct {
 	height int
 }
 
-type openActionsMsg struct{ feature string }
 type actionDoneMsg struct{ err error }
 
-func newActionsModel(m *Model, slug string) (*actionsModel, error) {
-	man, err := manifest.Load(m.cfg.ManifestPath(slug))
+// NewActions builds the per-feature Actions screen for a feature slug.
+func NewActions(ctx Ctx, slug string) (*ActionsModel, error) {
+	man, err := manifest.Load(ctx.Cfg.ManifestPath(slug))
 	if err != nil {
 		return nil, err
 	}
-	working, err := targetcfg.Working(m.cfg, m.pd, man)
+	working, err := targetcfg.Working(ctx.Cfg, ctx.Pd, man)
 	if err != nil {
 		return nil, err
 	}
-	a := &actionsModel{m: m, slug: slug, man: man, working: working, collapsed: map[int]bool{}}
+	a := &ActionsModel{ctx: ctx, slug: slug, man: man, working: working, collapsed: map[int]bool{}}
 	// Drop stale managed paths (e.g. a removed worktree) and persist if changed.
-	if removed := targetcfg.Prune(m.cfg, working); len(removed) > 0 {
+	if removed := targetcfg.Prune(ctx.Cfg, working); len(removed) > 0 {
 		a.save()
 	}
 	a.refreshActions()
@@ -87,8 +87,8 @@ func newActionsModel(m *Model, slug string) (*actionsModel, error) {
 
 // refreshActions re-scans workwood/actions for marked actions, keeping the current
 // selection if it's still present (else selecting the first, or none).
-func (a *actionsModel) refreshActions() {
-	a.actions, a.needChmod = action.Scan(a.m.cfg)
+func (a *ActionsModel) refreshActions() {
+	a.actions, a.needChmod = action.Scan(a.ctx.Cfg)
 	a.targetValid = nil // re-scanned → re-validate on next V
 	for _, act := range a.actions {
 		if act.Name == a.selected {
@@ -103,7 +103,7 @@ func (a *actionsModel) refreshActions() {
 }
 
 // selectedDesc returns the marker label of the currently-selected action.
-func (a *actionsModel) selectedDesc() string {
+func (a *ActionsModel) selectedDesc() string {
 	for _, act := range a.actions {
 		if act.Name == a.selected {
 			return act.Description
@@ -112,8 +112,8 @@ func (a *actionsModel) selectedDesc() string {
 	return ""
 }
 
-func (a *actionsModel) rebuild() {
-	a.nodes = targetcfg.Candidates(a.m.cfg, a.m.pd, a.man, a.working)
+func (a *ActionsModel) rebuild() {
+	a.nodes = targetcfg.Candidates(a.ctx.Cfg, a.ctx.Pd, a.man, a.working)
 	a.visible = nil
 	for i, n := range a.nodes {
 		if n.Parent >= 0 && a.collapsed[n.Parent] {
@@ -129,23 +129,23 @@ func (a *actionsModel) rebuild() {
 	}
 }
 
-func (a *actionsModel) cur() (targetcfg.Node, int, bool) {
+func (a *ActionsModel) cur() (targetcfg.Node, int, bool) {
 	if a.cursor < 0 || a.cursor >= len(a.visible) {
 		return targetcfg.Node{}, -1, false
 	}
 	return a.nodes[a.visible[a.cursor]], a.visible[a.cursor], true
 }
 
-func (a *actionsModel) save() {
+func (a *ActionsModel) save() {
 	// Note: per-target results are independent of which targets are toggled (each
 	// is validated with its own single-target context), so toggling does NOT
 	// invalidate them — only changing the action or re-scanning does.
-	_ = targetcfg.SaveWorking(a.m.cfg, a.man, a.working)
+	_ = targetcfg.SaveWorking(a.ctx.Cfg, a.man, a.working)
 }
 
 // failedEnabled returns the keys of ENABLED targets that failed validation — the
 // ones that would block a run.
-func (a *actionsModel) failedEnabled() []string {
+func (a *ActionsModel) failedEnabled() []string {
 	var bad []string
 	for _, n := range a.nodes {
 		if !n.Toggled {
@@ -160,25 +160,25 @@ func (a *actionsModel) failedEnabled() []string {
 
 // initSelected runs the selected action's Init (its bootstrap) against the current
 // working set, then re-validates so the per-target ✓/✗ reflect the new files.
-func (a *actionsModel) initSelected() {
+func (a *ActionsModel) initSelected() {
 	act := a.findAction(a.selected)
 	if act == nil {
 		return
 	}
 	if !act.HasInit {
-		a.status = errStyle.Render(i18n.T("tui.actions.no_init", a.selected))
+		a.status = components.ErrStyle.Render(i18n.T("tui.actions.no_init", a.selected))
 		return
 	}
-	if _, err := action.Init(a.m.cfg, a.slug, a.selected, a.working, a.man.Vars); err != nil {
-		a.status = errStyle.Render(i18n.T("tui.actions.init_failed", a.selected, err.Error()))
+	if _, err := action.Init(a.ctx.Cfg, a.slug, a.selected, a.working, a.man.Vars); err != nil {
+		a.status = components.ErrStyle.Render(i18n.T("tui.actions.init_failed", a.selected, err.Error()))
 		return
 	}
-	a.status = okStyle.Render(i18n.T("tui.actions.init_done", a.selected))
+	a.status = components.OkStyle.Render(i18n.T("tui.actions.init_done", a.selected))
 	a.validateSelected() // files now exist → refresh validation marks
 }
 
 // findAction returns the discovered Action for name, or nil.
-func (a *actionsModel) findAction(name string) *action.Action {
+func (a *ActionsModel) findAction(name string) *action.Action {
 	for i := range a.actions {
 		if a.actions[i].Name == name {
 			return &a.actions[i]
@@ -192,14 +192,14 @@ func (a *actionsModel) findAction(name string) *action.Action {
 // Validate with that one target as its context. The per-target pass/fail is shown
 // as a ✓/✗ next to each target in the tree. A structurally-incomplete action
 // (missing Run/Validate) is reported without running anything.
-func (a *actionsModel) validateSelected() {
+func (a *ActionsModel) validateSelected() {
 	a.targetValid = nil
 	act := a.findAction(a.selected)
 	if act == nil {
 		return
 	}
 	if !act.Runnable() {
-		a.status = errStyle.Render(i18n.T("tui.actions.unavailable_status", a.selected, i18n.T("tui.actions.missing_methods")))
+		a.status = components.ErrStyle.Render(i18n.T("tui.actions.unavailable_status", a.selected, i18n.T("tui.actions.missing_methods")))
 		return
 	}
 	res := map[string]bool{}
@@ -209,19 +209,19 @@ func (a *actionsModel) validateSelected() {
 			continue
 		}
 		total++
-		ok := action.Validate(a.m.cfg, a.slug, a.selected, map[string]string{n.Key: n.Path}, a.man.Vars) == nil
+		ok := action.Validate(a.ctx.Cfg, a.slug, a.selected, map[string]string{n.Key: n.Path}, a.man.Vars) == nil
 		res[n.Path] = ok
 		if ok {
 			pass++
 		}
 	}
 	a.targetValid = res
-	a.status = okStyle.Render(i18n.T("tui.actions.validated", a.selected, pass, total))
+	a.status = components.OkStyle.Render(i18n.T("tui.actions.validated", a.selected, pass, total))
 }
 
-func (a *actionsModel) setSize(w, h int) { a.width, a.height = w, h }
+func (a *ActionsModel) SetSize(w, h int) { a.width, a.height = w, h }
 
-func (a *actionsModel) Update(msg tea.Msg) (*actionsModel, tea.Cmd) {
+func (a *ActionsModel) Update(msg tea.Msg) (*ActionsModel, tea.Cmd) {
 	if a.form != nil {
 		if k, ok := msg.(tea.KeyMsg); ok {
 			switch k.String() {
@@ -250,9 +250,9 @@ func (a *actionsModel) Update(msg tea.Msg) (*actionsModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case actionDoneMsg:
 		if msg.err != nil {
-			a.status = errStyle.Render(i18n.T("tui.actions.run_failed", msg.err.Error()))
+			a.status = components.ErrStyle.Render(i18n.T("tui.actions.run_failed", msg.err.Error()))
 		} else {
-			a.status = okStyle.Render(i18n.T("tui.actions.ran", a.lastAction))
+			a.status = components.OkStyle.Render(i18n.T("tui.actions.ran", a.lastAction))
 		}
 		a.rebuild()
 		return a, nil
@@ -262,7 +262,7 @@ func (a *actionsModel) Update(msg tea.Msg) (*actionsModel, tea.Cmd) {
 		case "q", "ctrl+c":
 			return a, tea.Quit
 		case "esc":
-			return a, func() tea.Msg { return backMsg{} }
+			return a, func() tea.Msg { return BackMsg{} }
 		case "up", "k":
 			if a.cursor > 0 {
 				a.cursor--
@@ -290,13 +290,13 @@ func (a *actionsModel) Update(msg tea.Msg) (*actionsModel, tea.Cmd) {
 			a.status = i18n.T("tui.actions.toggle_first")
 		case "S":
 			a.nameVals = nameVals{name: a.lastPreset()} // jump to the last-loaded preset
-			a.form = newSavePresetForm(targetcfg.ListPresets(a.m.cfg), &a.nameVals).WithWidth(min(72, a.width-4))
+			a.form = newSavePresetForm(targetcfg.ListPresets(a.ctx.Cfg), &a.nameVals).WithWidth(min(72, a.width-4))
 			a.formMode = afSavePreset
 			return a, a.form.Init()
 		case "g":
 			a.regeneratePreset()
 		case "L":
-			presets := targetcfg.ListPresets(a.m.cfg)
+			presets := targetcfg.ListPresets(a.ctx.Cfg)
 			if len(presets) == 0 {
 				a.status = i18n.T("tui.actions.no_presets")
 				return a, nil
@@ -307,7 +307,7 @@ func (a *actionsModel) Update(msg tea.Msg) (*actionsModel, tea.Cmd) {
 			return a, a.form.Init()
 		case "d":
 			if len(a.actions) == 0 {
-				a.status = warnStyle.Render(i18n.T("tui.actions.none_found", a.m.cfg.ActionsDir))
+				a.status = components.WarnStyle.Render(i18n.T("tui.actions.none_found", a.ctx.Cfg.ActionsDir))
 				return a, nil
 			}
 			opts := make([]huh.Option[string], 0, len(a.actions))
@@ -324,24 +324,24 @@ func (a *actionsModel) Update(msg tea.Msg) (*actionsModel, tea.Cmd) {
 			return a, a.form.Init()
 		case "i":
 			if a.selected == "" {
-				a.status = warnStyle.Render(i18n.T("tui.actions.none_found", a.m.cfg.ActionsDir))
+				a.status = components.WarnStyle.Render(i18n.T("tui.actions.none_found", a.ctx.Cfg.ActionsDir))
 				return a, nil
 			}
 			a.initSelected()
 		case "V":
 			if a.selected == "" {
-				a.status = warnStyle.Render(i18n.T("tui.actions.none_found", a.m.cfg.ActionsDir))
+				a.status = components.WarnStyle.Render(i18n.T("tui.actions.none_found", a.ctx.Cfg.ActionsDir))
 				return a, nil
 			}
 			a.validateSelected()
 		case "R":
 			if a.selected == "" {
-				a.status = warnStyle.Render(i18n.T("tui.actions.none_found", a.m.cfg.ActionsDir))
+				a.status = components.WarnStyle.Render(i18n.T("tui.actions.none_found", a.ctx.Cfg.ActionsDir))
 				return a, nil
 			}
 			// Don't run a structurally-incomplete action (missing Run/Validate).
 			if act := a.findAction(a.selected); act == nil || !act.Runnable() {
-				a.status = errStyle.Render(i18n.T("tui.actions.cant_run", a.selected))
+				a.status = components.ErrStyle.Render(i18n.T("tui.actions.cant_run", a.selected))
 				return a, nil
 			}
 			// Don't run when an enabled target failed validation.
@@ -349,19 +349,19 @@ func (a *actionsModel) Update(msg tea.Msg) (*actionsModel, tea.Cmd) {
 				a.validateSelected()
 			}
 			if failed := a.failedEnabled(); len(failed) > 0 {
-				a.status = errStyle.Render(i18n.T("tui.actions.blocked_failed", strings.Join(failed, ", ")))
+				a.status = components.ErrStyle.Render(i18n.T("tui.actions.blocked_failed", strings.Join(failed, ", ")))
 				return a, nil
 			}
 			return a, a.runAction(a.selected)
 		case "f":
 			a.refreshActions()
-			a.status = okStyle.Render(i18n.T("tui.actions.refreshed", len(a.actions)))
+			a.status = components.OkStyle.Render(i18n.T("tui.actions.refreshed", len(a.actions)))
 		}
 	}
 	return a, nil
 }
 
-func (a *actionsModel) toggle() {
+func (a *ActionsModel) toggle() {
 	n, _, ok := a.cur()
 	if !ok || !n.Toggleable() {
 		return
@@ -375,7 +375,7 @@ func (a *actionsModel) toggle() {
 	a.rebuild()
 }
 
-func (a *actionsModel) expandCollapse() {
+func (a *ActionsModel) expandCollapse() {
 	n, idx, ok := a.cur()
 	if !ok || n.Kind != targetcfg.KindServiceParent {
 		return
@@ -384,7 +384,7 @@ func (a *actionsModel) expandCollapse() {
 	a.rebuild()
 }
 
-func (a *actionsModel) onFormDone() tea.Cmd {
+func (a *ActionsModel) onFormDone() tea.Cmd {
 	mode := a.formMode
 	a.form = nil
 	a.formMode = afNone
@@ -399,7 +399,7 @@ func (a *actionsModel) onFormDone() tea.Cmd {
 			return nil
 		}
 		// Overwriting an existing preset asks first; a new name saves straight away.
-		if targetcfg.PresetExists(a.m.cfg, name) {
+		if targetcfg.PresetExists(a.ctx.Cfg, name) {
 			a.pendingPreset = name
 			a.confirmVals = confirmVals{}
 			a.form = newConfirmForm(i18n.T("tui.actions.overwrite_confirm", name), &a.confirmVals).WithWidth(min(72, a.width-4))
@@ -425,7 +425,7 @@ func (a *actionsModel) onFormDone() tea.Cmd {
 	return nil
 }
 
-func (a *actionsModel) addPath() {
+func (a *ActionsModel) addPath() {
 	p := strings.TrimSpace(a.pathVals.path)
 	if p == "" {
 		return
@@ -435,16 +435,16 @@ func (a *actionsModel) addPath() {
 		key = uk
 	}
 	if key == "" {
-		a.status = errStyle.Render(i18n.T("tui.actions.need_key"))
+		a.status = components.ErrStyle.Render(i18n.T("tui.actions.need_key"))
 		return
 	}
 	targetcfg.Enable(a.working, key, abs)
 	a.save()
 	a.rebuild()
-	a.status = okStyle.Render(i18n.T("tui.actions.added_path", key))
+	a.status = components.OkStyle.Render(i18n.T("tui.actions.added_path", key))
 }
 
-func (a *actionsModel) renameKey() {
+func (a *ActionsModel) renameKey() {
 	n, _, ok := a.cur()
 	if !ok || !n.Toggled {
 		return
@@ -456,45 +456,45 @@ func (a *actionsModel) renameKey() {
 	targetcfg.Rename(a.working, n.Key, newKey)
 	a.save()
 	a.rebuild()
-	a.status = okStyle.Render(i18n.T("tui.actions.renamed", newKey))
+	a.status = components.OkStyle.Render(i18n.T("tui.actions.renamed", newKey))
 }
 
-func (a *actionsModel) savePreset(name string) {
-	if err := targetcfg.SavePreset(a.m.cfg, name, a.working); err != nil {
-		a.status = errStyle.Render(i18n.T("tui.actions.run_failed", err.Error()))
+func (a *ActionsModel) savePreset(name string) {
+	if err := targetcfg.SavePreset(a.ctx.Cfg, name, a.working); err != nil {
+		a.status = components.ErrStyle.Render(i18n.T("tui.actions.run_failed", err.Error()))
 		return
 	}
 	a.recordLastPreset(name)
-	a.status = okStyle.Render(i18n.T("tui.actions.saved_preset", name))
+	a.status = components.OkStyle.Render(i18n.T("tui.actions.saved_preset", name))
 }
 
-func (a *actionsModel) loadPreset(name string) {
-	set, err := targetcfg.LoadPreset(a.m.cfg, name)
+func (a *ActionsModel) loadPreset(name string) {
+	set, err := targetcfg.LoadPreset(a.ctx.Cfg, name)
 	if err != nil {
-		a.status = errStyle.Render(i18n.T("tui.actions.run_failed", err.Error()))
+		a.status = components.ErrStyle.Render(i18n.T("tui.actions.run_failed", err.Error()))
 		return
 	}
 	a.working = set
 	a.save()
 	a.recordLastPreset(name)
 	a.rebuild()
-	a.status = okStyle.Render(i18n.T("tui.actions.loaded_preset", name))
+	a.status = components.OkStyle.Render(i18n.T("tui.actions.loaded_preset", name))
 }
 
 // regeneratePreset rewrites <feature>.yml from a fresh CleanSet (repos + current
 // worktrees), overwriting it — the explicit "pick up new worktrees" action.
-func (a *actionsModel) regeneratePreset() {
-	if err := targetcfg.SavePreset(a.m.cfg, a.slug, targetcfg.CleanSet(a.m.cfg, a.m.pd, a.man)); err != nil {
-		a.status = errStyle.Render(i18n.T("tui.actions.run_failed", err.Error()))
+func (a *ActionsModel) regeneratePreset() {
+	if err := targetcfg.SavePreset(a.ctx.Cfg, a.slug, targetcfg.CleanSet(a.ctx.Cfg, a.ctx.Pd, a.man)); err != nil {
+		a.status = components.ErrStyle.Render(i18n.T("tui.actions.run_failed", err.Error()))
 		return
 	}
 	a.recordLastPreset(a.slug)
-	a.status = okStyle.Render(i18n.T("tui.actions.regenerated", a.slug))
+	a.status = components.OkStyle.Render(i18n.T("tui.actions.regenerated", a.slug))
 }
 
 // lastPreset is the preset name last loaded/saved for this feature (UI memory).
-func (a *actionsModel) lastPreset() string {
-	st, err := config.LoadState(a.m.cfg.StateFile)
+func (a *ActionsModel) lastPreset() string {
+	st, err := config.LoadState(a.ctx.Cfg.StateFile)
 	if err != nil {
 		return ""
 	}
@@ -502,19 +502,19 @@ func (a *actionsModel) lastPreset() string {
 }
 
 // recordLastPreset persists the last loaded/saved preset name for this feature.
-func (a *actionsModel) recordLastPreset(name string) {
-	st, err := config.LoadState(a.m.cfg.StateFile)
+func (a *ActionsModel) recordLastPreset(name string) {
+	st, err := config.LoadState(a.ctx.Cfg.StateFile)
 	if err != nil {
 		return
 	}
 	st.SetLastPreset(a.man.ID, name)
-	_ = config.SaveState(a.m.cfg.StateFile, st)
+	_ = config.SaveState(a.ctx.Cfg.StateFile, st)
 }
 
-func (a *actionsModel) runAction(name string) tea.Cmd {
-	cmd, err := action.Command(a.m.cfg, a.slug, name, a.working, a.man.Vars)
+func (a *ActionsModel) runAction(name string) tea.Cmd {
+	cmd, err := action.Command(a.ctx.Cfg, a.slug, name, a.working, a.man.Vars)
 	if err != nil {
-		a.status = errStyle.Render(i18n.T("tui.actions.run_failed", err.Error()))
+		a.status = components.ErrStyle.Render(i18n.T("tui.actions.run_failed", err.Error()))
 		return nil
 	}
 	a.lastAction = name
@@ -522,30 +522,30 @@ func (a *actionsModel) runAction(name string) tea.Cmd {
 	return tea.ExecProcess(cmd, func(err error) tea.Msg { return actionDoneMsg{err: err} })
 }
 
-func (a *actionsModel) View() string {
+func (a *ActionsModel) View() string {
 	if a.form != nil {
 		title := a.formTitle()
-		return docStyle.Render(titleStyle.Render(title) + "\n\n" + a.form.View() + "\n" + helpStyle.Render(i18n.T("tui.form_help")))
+		return components.DocStyle.Render(components.TitleStyle.Render(title) + "\n\n" + a.form.View() + "\n" + components.HelpStyle.Render(i18n.T("tui.form_help")))
 	}
 
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(i18n.T("tui.actions.title", a.man.Feature)) + "\n\n")
+	b.WriteString(components.TitleStyle.Render(i18n.T("tui.actions.title", a.man.Feature)) + "\n\n")
 
 	// Top panel: the action "dropdown" (selected action), or a no-actions notice.
 	if a.selected == "" {
-		b.WriteString(warnStyle.Render(i18n.T("tui.actions.none_found", a.m.cfg.ActionsDir)) + "\n")
+		b.WriteString(components.WarnStyle.Render(i18n.T("tui.actions.none_found", a.ctx.Cfg.ActionsDir)) + "\n")
 		if len(a.needChmod) > 0 {
-			b.WriteString(errStyle.Render(i18n.T("actions.need_chmod", strings.Join(a.needChmod, ", "))) + "\n")
+			b.WriteString(components.ErrStyle.Render(i18n.T("actions.need_chmod", strings.Join(a.needChmod, ", "))) + "\n")
 		}
 	} else {
 		line := i18n.T("tui.actions.selected", a.selected)
 		if d := a.selectedDesc(); d != "" {
-			line += "  " + dimStyle.Render(d)
+			line += "  " + components.DimStyle.Render(d)
 		}
 		// Badge: structural invalidity (missing Run/Validate) always shows; once
 		// validated, a per-target pass summary.
 		if act := a.findAction(a.selected); act != nil && !act.Runnable() {
-			line += "  " + errStyle.Render(i18n.T("tui.actions.badge_unavailable"))
+			line += "  " + components.ErrStyle.Render(i18n.T("tui.actions.badge_unavailable"))
 		} else if a.targetValid != nil {
 			pass := 0
 			for _, ok := range a.targetValid {
@@ -553,7 +553,7 @@ func (a *actionsModel) View() string {
 					pass++
 				}
 			}
-			line += "  " + dimStyle.Render(i18n.T("tui.actions.target_summary", pass, len(a.targetValid)))
+			line += "  " + components.DimStyle.Render(i18n.T("tui.actions.target_summary", pass, len(a.targetValid)))
 		}
 		b.WriteString(line + "\n")
 	}
@@ -561,11 +561,11 @@ func (a *actionsModel) View() string {
 	if sepW <= 0 || sepW > 64 {
 		sepW = 64
 	}
-	b.WriteString(dimStyle.Render(strings.Repeat("─", sepW)) + "\n\n")
+	b.WriteString(components.DimStyle.Render(strings.Repeat("─", sepW)) + "\n\n")
 
 	// Bottom panel: the target tree.
 	if len(a.visible) == 0 {
-		b.WriteString(dimStyle.Render(i18n.T("tui.actions.tree_empty")) + "\n")
+		b.WriteString(components.DimStyle.Render(i18n.T("tui.actions.tree_empty")) + "\n")
 	}
 	for vi, ni := range a.visible {
 		n := a.nodes[ni]
@@ -586,7 +586,7 @@ func (a *actionsModel) View() string {
 		label := n.Key
 		path := n.Path
 		if !n.Exists {
-			path += " " + warnStyle.Render(i18n.T("tui.actions.missing"))
+			path += " " + components.WarnStyle.Render(i18n.T("tui.actions.missing"))
 		}
 		// Per-target validation: a ✓/✗ mark on every validated target, and the
 		// ENABLED ones get their text coloured by the result (green = passed,
@@ -595,20 +595,20 @@ func (a *actionsModel) View() string {
 		labelOut := label
 		if ok, checked := a.targetValid[n.Path]; checked && n.Toggleable() {
 			if ok {
-				vmark = "  " + okStyle.Render("✓")
+				vmark = "  " + components.OkStyle.Render("✓")
 				if n.Toggled {
-					labelOut = okStyle.Render(label)
+					labelOut = components.OkStyle.Render(label)
 				}
 			} else {
-				vmark = "  " + errStyle.Render("✗")
+				vmark = "  " + components.ErrStyle.Render("✗")
 				if n.Toggled {
-					labelOut = errStyle.Render(label)
+					labelOut = components.ErrStyle.Render(label)
 				}
 			}
 		}
-		line := indent + marker + " " + labelOut + "  " + dimStyle.Render(path)
+		line := indent + marker + " " + labelOut + "  " + components.DimStyle.Render(path)
 		if vi == a.cursor {
-			line = selectedRowStyle.Render(indent + marker + " " + label + "  " + path)
+			line = components.SelectedRowStyle.Render(indent + marker + " " + label + "  " + path)
 		}
 		b.WriteString(line + vmark + "\n")
 	}
@@ -617,11 +617,11 @@ func (a *actionsModel) View() string {
 	if a.status != "" {
 		b.WriteString(a.status + "\n")
 	}
-	b.WriteString(helpStyle.Render(i18n.T("tui.actions.help")))
-	return docStyle.Render(b.String())
+	b.WriteString(components.HelpStyle.Render(i18n.T("tui.actions.help")))
+	return components.DocStyle.Render(b.String())
 }
 
-func (a *actionsModel) formTitle() string {
+func (a *ActionsModel) formTitle() string {
 	switch a.formMode {
 	case afAddPath:
 		return i18n.T("tui.title.add_path")

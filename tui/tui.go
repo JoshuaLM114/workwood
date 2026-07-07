@@ -3,7 +3,10 @@
 // where worktrees can be staged for addition/removal and applied as one delta, and
 // "Edit project" manages the base repos in workwood.yml. Forms use huh.
 //
-// The TUI operates on ONE already-resolved project (chosen via -p or cwd).
+// The TUI operates on ONE already-resolved project (chosen via -p or cwd). This
+// root package holds the shared state, the active screen, and the routing between
+// screens; the screen models themselves live in the menus sub-package, and shared
+// styles in the components sub-package.
 package tui
 
 import (
@@ -11,37 +14,18 @@ import (
 	"sort"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
-	"github.com/JoshuaLM114/workwood/projectdef"
+	"github.com/JoshuaLM114/workwood/models"
 	"github.com/JoshuaLM114/workwood/repos"
 	"github.com/JoshuaLM114/workwood/superfeature"
-	"github.com/charmbracelet/bubbles/table"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/JoshuaLM114/workwood/tui/components"
+	"github.com/JoshuaLM114/workwood/tui/menus"
 )
 
-// ---- styles -----------------------------------------------------------------
-
-var (
-	docStyle   = lipgloss.NewStyle().Margin(1, 2)
-	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63")).Background(lipgloss.Color("236")).Padding(0, 1)
-	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	helpStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	errStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	okStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("78"))
-	warnStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-)
-
-func tableStyles() table.Styles {
-	s := table.DefaultStyles()
-	s.Header = s.Header.Bold(true).Foreground(lipgloss.Color("252")).BorderBottom(true)
-	s.Selected = s.Selected.Bold(true).Foreground(lipgloss.Color("231")).Background(lipgloss.Color("63"))
-	return s
-}
-
-// ---- messages ---------------------------------------------------------------
+// ---- screens ----------------------------------------------------------------
 
 type screen int
 
@@ -57,48 +41,24 @@ const (
 	screenReconcile // the manifest↔disk reconcile walkthrough
 )
 
-type openEditorMsg struct{ feature string }
-type openDeleteMsg struct{ feature, name string }
-type openReconcileMsg struct{ feature string }
-type openCreateMsg struct{}
-type openFeaturesMsg struct{}
-type openReposMsg struct{}
-type openSettingsMsg struct{}
-type backMsg struct{}
-type applyDoneMsg struct {
-	res *superfeature.EditResult
-	err error
-}
-type upDoneMsg struct {
-	log []string
-	err error
-}
-
 // ---- root model -------------------------------------------------------------
 
-// Model is the root Bubble Tea model that switches between the picker, the
-// create-feature form, and the editor.
+// Model is the root Bubble Tea model that switches between the menu and the screen
+// models (held as menus.* sub-models) and routes navigation messages between them.
 type Model struct {
-	cfg *config.Config
-	pd  *projectdef.File
+	cfg *models.Config
+	pd  *models.ProjectDef
 
 	screen    screen
-	menu      menuModel
-	features  *featuresModel
-	editor    *editorModel
-	actions   *actionsModel
-	repos     *reposModel
-	delete    *deleteModel
-	reconcile *reconcileModel
-
-	createForm *huh.Form
-	createVals createVals
-
-	settingsForm  *huh.Form
-	settingsVals  settingsVals
-	settingsApp   *config.AppSettings
-	settingsState *config.ProjectState
-	settingsHome  string
+	menu      menus.MenuModel
+	features  *menus.FeaturesModel
+	editor    *menus.EditorModel
+	actions   *menus.ActionsModel
+	repos     *menus.ReposModel
+	delete    *menus.DeleteModel
+	reconcile *menus.ReconcileModel
+	create    *menus.CreateModel
+	settings  *menus.SettingsModel
 
 	width, height int
 	err           error
@@ -106,6 +66,11 @@ type Model struct {
 	linkNotice    string   // set on boot when feature back-links need repair (or after a fix)
 	brokenLinks   []string // feature slugs whose .workwood/link.yml is missing/stale
 	actionsToMenu bool     // launched into Actions from a feature folder → esc goes to the menu
+}
+
+// ctx snapshots the shared, read-only project state for building a screen model.
+func (m *Model) ctx() menus.Ctx {
+	return menus.Ctx{Cfg: m.cfg, Pd: m.pd, Width: m.width, Height: m.height}
 }
 
 // bootSyncMsg carries the on-boot health check: ref repos behind origin, and
@@ -125,7 +90,7 @@ func (m *Model) bootFetchCmd() tea.Cmd {
 	// fetch ranges over it — copy the slice so the goroutine shares nothing the
 	// event loop mutates (otherwise a -race-detectable data race).
 	pd := *m.pd
-	pd.Repos = append([]projectdef.Repo(nil), m.pd.Repos...)
+	pd.Repos = append([]models.Repo(nil), m.pd.Repos...)
 	return func() tea.Msg {
 		repos.FetchAll(cfg, &pd)
 		return bootSyncMsg{outOfSync: repos.OutOfSync(cfg, &pd), brokenLinks: brokenFeatureLinks(cfg)}
@@ -134,7 +99,7 @@ func (m *Model) bootFetchCmd() tea.Cmd {
 
 // brokenFeatureLinks returns the slugs of built features (those with a folder on
 // disk) whose .workwood/link.yml is missing, an old version, or inconsistent.
-func brokenFeatureLinks(cfg *config.Config) []string {
+func brokenFeatureLinks(cfg *models.Config) []string {
 	st, err := config.LoadState(cfg.StateFile)
 	if err != nil {
 		return nil
@@ -160,10 +125,11 @@ func brokenFeatureLinks(cfg *config.Config) []string {
 // root menu; when launched from inside a feature folder (cfg.ActiveFeature set) it
 // jumps straight to that feature's Actions panel, with esc wired back to the menu
 // so the parent yamls (repos, manifests, settings) stay reachable.
-func Run(cfg *config.Config, pd *projectdef.File) error {
+func Run(cfg *models.Config, pd *models.ProjectDef) error {
 	m := &Model{cfg: cfg, pd: pd, screen: screenMenu}
+	m.menu = menus.NewMenu(m.ctx(), menus.Notices{})
 	if cfg.ActiveFeature != "" {
-		if am, err := newActionsModel(m, cfg.ActiveFeature); err == nil {
+		if am, err := menus.NewActions(m.ctx(), cfg.ActiveFeature); err == nil {
 			m.actions = am
 			m.screen = screenActions
 			m.actionsToMenu = true
@@ -181,16 +147,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		hw, hh := msg.Width-4, msg.Height-4
 		if m.features != nil {
-			m.features.list.SetSize(hw, hh)
+			m.features.SetSize(hw, hh)
 		}
 		if m.editor != nil {
-			m.editor.setSize(hw, hh)
+			m.editor.SetSize(hw, hh)
 		}
 		if m.actions != nil {
-			m.actions.setSize(hw, hh)
+			m.actions.SetSize(hw, hh)
 		}
 		if m.repos != nil {
-			m.repos.setSize(hw, hh)
+			m.repos.SetSize(hw, hh)
 		}
 		return m, nil
 
@@ -200,99 +166,92 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.brokenLinks = msg.brokenLinks
 		if len(msg.brokenLinks) > 0 {
-			m.linkNotice = warnStyle.Render(i18n.T("tui.menu.links_broken", strings.Join(msg.brokenLinks, ", ")))
+			m.linkNotice = components.WarnStyle.Render(i18n.T("tui.menu.links_broken", strings.Join(msg.brokenLinks, ", ")))
 		}
+		m.menu.SetNotices(menus.Notices{SyncWarning: m.syncWarning, LinkNotice: m.linkNotice, BrokenLinks: m.brokenLinks})
 		return m, nil
 
-	case openFeaturesMsg:
-		m.features = newFeaturesModel(m)
-		m.features.list.SetSize(m.width-4, m.height-4)
+	case menus.ErrMsg:
+		m.err = msg.Err
+		return m, nil
+
+	case menus.OpenFeaturesMsg:
+		m.features = menus.NewFeatures(m.ctx())
+		m.features.SetSize(m.width-4, m.height-4)
 		m.screen = screenFeatures
 		return m, nil
 
-	case openReposMsg:
-		m.repos = newReposModel(m)
-		m.repos.setSize(m.width-4, m.height-4)
+	case menus.OpenReposMsg:
+		m.repos = menus.NewRepos(m.ctx())
+		m.repos.SetSize(m.width-4, m.height-4)
 		m.screen = screenRepos
 		return m, nil
 
-	case openCreateMsg:
+	case menus.OpenCreateMsg:
 		// Block creation until the project's base repos are real clones.
 		if err := superfeature.CheckReposReady(m.cfg); err != nil {
 			if m.features != nil {
-				m.features.status = errStyle.Render(err.Error())
+				m.features.SetStatus(components.ErrStyle.Render(err.Error()))
 			}
 			return m, nil
 		}
-		m.createVals = createVals{}
-		m.createForm = newCreateForm(m.cfg, &m.createVals).WithWidth(min(72, m.width-4))
+		m.create = menus.NewCreate(m.ctx())
 		m.screen = screenCreate
-		return m, m.createForm.Init()
+		return m, m.create.Init()
 
-	case openSettingsMsg:
-		app, home, err := config.LoadApp()
+	case menus.OpenSettingsMsg:
+		sm, err := menus.NewSettings(m.ctx())
 		if err != nil {
 			m.err = err
 			return m, nil
 		}
-		st, err := config.LoadState(m.cfg.StateFile)
-		if err != nil {
-			m.err = err
-			return m, nil
-		}
-		m.settingsApp, m.settingsState, m.settingsHome = app, st, home
-		m.settingsVals = settingsVals{
-			lang:        i18n.Lang(),
-			updateCheck: app.UpdateCheckEnabled(),
-			name:        m.cfg.ProjectName,
-		}
-		m.settingsForm = newSettingsForm(i18n.Supported, &m.settingsVals).WithWidth(min(72, m.width-4))
+		m.settings = sm
 		m.screen = screenSettings
-		return m, m.settingsForm.Init()
+		return m, m.settings.Init()
 
-	case openEditorMsg:
-		ed, err := newEditorModel(m, msg.feature)
+	case menus.OpenEditorMsg:
+		ed, err := menus.NewEditor(m.ctx(), msg.Feature)
 		if err != nil {
 			m.err = err
 			return m, nil
 		}
 		m.editor = ed
-		m.editor.setSize(m.width-4, m.height-4)
+		m.editor.SetSize(m.width-4, m.height-4)
 		m.screen = screenEditor
 		return m, nil
 
-	case openActionsMsg:
-		am, err := newActionsModel(m, msg.feature)
+	case menus.OpenActionsMsg:
+		am, err := menus.NewActions(m.ctx(), msg.Feature)
 		if err != nil {
 			m.err = err
 			return m, nil
 		}
 		m.actions = am
-		m.actions.setSize(m.width-4, m.height-4)
+		m.actions.SetSize(m.width-4, m.height-4)
 		m.screen = screenActions
 		return m, nil
 
-	case openDeleteMsg:
-		dm, err := newDeleteModel(m, msg.feature, msg.name)
+	case menus.OpenDeleteMsg:
+		dm, err := menus.NewDelete(m.ctx(), msg.Feature, msg.Name)
 		if err != nil {
 			m.err = err
 			return m, nil
 		}
 		m.delete = dm
 		m.screen = screenDelete
-		return m, m.delete.form.Init()
+		return m, m.delete.Init()
 
-	case openReconcileMsg:
-		rm, err := newReconcileModel(m, msg.feature)
+	case menus.OpenReconcileMsg:
+		rm, err := menus.NewReconcile(m.ctx(), msg.Feature)
 		if err != nil {
 			m.err = err
 			return m, nil
 		}
 		m.reconcile = rm
 		m.screen = screenReconcile
-		return m, m.reconcile.form.Init()
+		return m, m.reconcile.Init()
 
-	case backMsg:
+	case menus.BackMsg:
 		// Back walks the screen hierarchy: actions → editor → features → menu, and
 		// repos → menu.
 		switch m.screen {
@@ -306,8 +265,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case screenEditor:
 			m.editor = nil
-			m.features = newFeaturesModel(m)
-			m.features.list.SetSize(m.width-4, m.height-4)
+			m.features = menus.NewFeatures(m.ctx())
+			m.features.SetSize(m.width-4, m.height-4)
 			m.screen = screenFeatures
 		case screenRepos:
 			m.repos = nil
@@ -320,9 +279,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch m.screen {
 	case screenCreate:
-		return m.updateCreate(msg)
+		var cmd tea.Cmd
+		m.create, cmd = m.create.Update(msg)
+		return m, cmd
 	case screenSettings:
-		return m.updateSettings(msg)
+		var cmd tea.Cmd
+		m.settings, cmd = m.settings.Update(msg)
+		return m, cmd
 	case screenEditor:
 		var cmd tea.Cmd
 		m.editor, cmd = m.editor.Update(msg)
@@ -346,15 +309,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case screenFeatures:
 		// esc → back to the menu; q / ctrl+c quit — but only when no filter is
 		// active, so those keys can still type into / cancel a filter.
-		if k, ok := msg.(tea.KeyMsg); ok && m.features.list.FilterState() == 0 {
+		if k, ok := msg.(tea.KeyMsg); ok && m.features.FilterState() == 0 {
 			switch k.String() {
 			case "esc":
-				return m, func() tea.Msg { return backMsg{} }
+				return m, func() tea.Msg { return menus.BackMsg{} }
 			case "q", "ctrl+c":
 				return m, tea.Quit
 			}
 		}
-		cmd := m.features.update(m, msg)
+		cmd := m.features.Update(msg)
 		return m, cmd
 	default: // screenMenu (root): q / esc / ctrl+c exit
 		if k, ok := msg.(tea.KeyMsg); ok {
@@ -364,119 +327,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		var cmd tea.Cmd
-		m.menu, cmd = m.menu.update(m, msg)
+		m.menu, cmd = m.menu.Update(msg)
 		return m, cmd
 	}
 }
 
-// updateCreate drives the new-feature huh form, then creates the manifest and
-// hands off to the editor for the freshly made feature.
-func (m *Model) updateCreate(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if k, ok := msg.(tea.KeyMsg); ok {
-		switch k.String() {
-		case "ctrl+c":
-			return m, tea.Quit
-		case "esc": // back out to the features page without creating
-			m.createForm = nil
-			m.screen = screenFeatures
-			return m, nil
-		}
-	}
-	fm, cmd := m.createForm.Update(msg)
-	if f, ok := fm.(*huh.Form); ok {
-		m.createForm = f
-	}
-	switch m.createForm.State {
-	case huh.StateCompleted:
-		name := m.createVals.name
-		if err := superfeature.Create(m.cfg, name, m.createVals.shorthand, m.createVals.desc); err != nil {
-			m.err = err
-			m.screen = screenFeatures
-			return m, nil
-		}
-		m.createForm = nil
-		// Open the editor synchronously: if we just flipped to a screen whose model
-		// isn't built yet (or left screenCreate with a nil form), the next render
-		// would dereference nil. Build the editor now and switch in one step.
-		ed, err := newEditorModel(m, name)
-		if err != nil {
-			m.err = err
-			m.screen = screenFeatures
-			return m, nil
-		}
-		m.editor = ed
-		m.editor.setSize(m.width-4, m.height-4)
-		m.screen = screenEditor
-		return m, nil
-	case huh.StateAborted:
-		m.createForm = nil
-		m.screen = screenFeatures
-		return m, nil
-	}
-	return m, cmd
-}
-
-// updateSettings drives the dotfile-settings form, then writes the registry and
-// applies the chosen language immediately. esc cancels without saving.
-func (m *Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if k, ok := msg.(tea.KeyMsg); ok {
-		switch k.String() {
-		case "ctrl+c":
-			return m, tea.Quit
-		case "esc": // cancel — back to the menu without saving
-			m.settingsForm = nil
-			m.screen = screenMenu
-			return m, nil
-		}
-	}
-	fm, cmd := m.settingsForm.Update(msg)
-	if f, ok := fm.(*huh.Form); ok {
-		m.settingsForm = f
-	}
-	switch m.settingsForm.State {
-	case huh.StateCompleted:
-		// Global app settings (language, update-check).
-		app := m.settingsApp
-		app.Language = m.settingsVals.lang
-		uc := m.settingsVals.updateCheck
-		app.UpdateCheck = &uc
-		if err := config.SaveApp(m.settingsHome, app); err != nil {
-			m.err = err
-			return m, nil
-		}
-		// Project-local state (the active_name; checkout paths aren't editable).
-		st := m.settingsState
-		st.Project = m.cfg.ProjectID
-		st.Name = m.settingsVals.name
-		if err := config.SaveState(m.cfg.StateFile, st); err != nil {
-			m.err = err
-			return m, nil
-		}
-		// Apply immediately: switch language + update the display name.
-		i18n.Init(m.settingsVals.lang)
-		m.cfg.ProjectName = m.settingsVals.name
-		m.settingsForm = nil
-		m.screen = screenMenu
-		return m, nil
-	case huh.StateAborted:
-		m.settingsForm = nil
-		m.screen = screenMenu
-		return m, nil
-	}
-	return m, cmd
-}
-
 func (m *Model) View() string {
 	if m.err != nil {
-		return docStyle.Render(errStyle.Render(i18n.T("tui.error", m.err.Error())) + "\n\n" + helpStyle.Render(i18n.T("tui.press_q")))
+		return components.DocStyle.Render(components.ErrStyle.Render(i18n.T("tui.error", m.err.Error())) + "\n\n" + components.HelpStyle.Render(i18n.T("tui.press_q")))
 	}
 	switch m.screen {
 	case screenCreate:
-		return docStyle.Render(titleStyle.Render(i18n.T("tui.new_feature")) + "\n\n" + m.createForm.View() + "\n" + helpStyle.Render(i18n.T("tui.form_help")))
+		return m.create.View()
 	case screenSettings:
-		return docStyle.Render(titleStyle.Render(i18n.T("tui.settings.title")) + "\n\n" + m.settingsForm.View() + "\n" + helpStyle.Render(i18n.T("tui.form_help")))
+		return m.settings.View()
 	case screenFeatures:
-		return docStyle.Render(m.features.View())
+		return components.DocStyle.Render(m.features.View())
 	case screenEditor:
 		return m.editor.View()
 	case screenActions:
@@ -488,12 +354,6 @@ func (m *Model) View() string {
 	case screenReconcile:
 		return m.reconcile.View()
 	default:
-		return m.menu.View(m)
+		return m.menu.View()
 	}
-}
-
-// pathExists reports whether a filesystem path exists.
-func pathExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }

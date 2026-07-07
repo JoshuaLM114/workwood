@@ -1,22 +1,17 @@
-package tui
+package menus
 
 import (
 	"fmt"
 	"os"
 	"strings"
 
-	"github.com/JoshuaLM114/workwood/config"
+	"github.com/charmbracelet/huh"
+
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/manifest"
+	"github.com/JoshuaLM114/workwood/models"
 	"github.com/JoshuaLM114/workwood/repos"
-	"github.com/charmbracelet/huh"
 )
-
-// form builds a huh form with the library's English key-hint footer disabled —
-// the TUI renders its own localized footer (tui.form_help) instead.
-func form(groups ...*huh.Group) *huh.Form {
-	return huh.NewForm(groups...).WithShowHelp(false)
-}
 
 // required rejects blank input.
 func required(s string) error {
@@ -36,7 +31,7 @@ type createVals struct {
 // newCreateForm builds the "create a new super-feature" form. The name must be
 // non-empty, free of whitespace/slashes (it becomes a branch prefix, a dir, and
 // a manifest filename), and must not collide with an existing manifest.
-func newCreateForm(cfg *config.Config, v *createVals) *huh.Form {
+func newCreateForm(cfg *models.Config, v *createVals) *huh.Form {
 	return form(
 		huh.NewGroup(
 			huh.NewInput().

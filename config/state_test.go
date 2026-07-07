@@ -3,6 +3,8 @@ package config
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/JoshuaLM114/workwood/models"
 )
 
 func TestProjectStateRoundTrip(t *testing.T) {
@@ -59,7 +61,7 @@ func TestLastPresetRoundTrip(t *testing.T) {
 }
 
 func TestEnsureFeatureIdempotent(t *testing.T) {
-	st := &ProjectState{Features: map[string]FeatureState{}}
+	st := &models.ProjectState{Features: map[string]models.FeatureState{}}
 	if !st.EnsureFeature("u", "slug") {
 		t.Fatal("first EnsureFeature should add")
 	}
@@ -72,7 +74,7 @@ func TestEnsureFeatureIdempotent(t *testing.T) {
 }
 
 func TestWorkingSetOps(t *testing.T) {
-	st := &ProjectState{Features: map[string]FeatureState{}}
+	st := &models.ProjectState{Features: map[string]models.FeatureState{}}
 	st.EnsureFeature("u", "s")
 
 	st.SetWorkingSet("u", map[string]string{"api": "/a", "web": "/w"})
@@ -87,7 +89,7 @@ func TestWorkingSetOps(t *testing.T) {
 }
 
 func TestFeatureBySlug(t *testing.T) {
-	st := &ProjectState{Features: map[string]FeatureState{}}
+	st := &models.ProjectState{Features: map[string]models.FeatureState{}}
 	st.EnsureFeature("u1", "alpha")
 	id, fs, ok := st.FeatureBySlug("alpha")
 	if !ok || id != "u1" || fs.Slug != "alpha" {
@@ -99,10 +101,10 @@ func TestFeatureBySlug(t *testing.T) {
 }
 
 func TestDisplayName(t *testing.T) {
-	if got := (FeatureState{Slug: "slug"}).DisplayName(); got != "slug" {
+	if got := (models.FeatureState{Slug: "slug"}).DisplayName(); got != "slug" {
 		t.Fatalf("want slug, got %q", got)
 	}
-	if got := (FeatureState{Slug: "slug", Name: "Nice"}).DisplayName(); got != "Nice" {
+	if got := (models.FeatureState{Slug: "slug", Name: "Nice"}).DisplayName(); got != "Nice" {
 		t.Fatalf("want Nice, got %q", got)
 	}
 }

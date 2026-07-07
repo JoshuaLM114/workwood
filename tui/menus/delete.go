@@ -1,13 +1,15 @@
-package tui
+package menus
 
 import (
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
+
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/manifest"
 	"github.com/JoshuaLM114/workwood/superfeature"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/huh"
+	"github.com/JoshuaLM114/workwood/tui/components"
 )
 
 // deleteRepoVals binds one repo's teardown choices in the delete walkthrough.
@@ -27,11 +29,11 @@ type deleteVals struct {
 	repos   []deleteRepoVals
 }
 
-// deleteModel drives the "delete super-feature" walkthrough: a warning + a per-repo
+// DeleteModel drives the "delete super-feature" walkthrough: a warning + a per-repo
 // page asking whether to remove the worktree, delete the local files, and delete
 // the branch — then it tears the feature down and shows a log.
-type deleteModel struct {
-	m    *Model
+type DeleteModel struct {
+	ctx  Ctx
 	slug string
 	name string
 	form *huh.Form
@@ -41,25 +43,28 @@ type deleteModel struct {
 	err  error
 }
 
-// newDeleteModel loads the feature's manifest and builds the walkthrough form. The
+// NewDelete loads the feature's manifest and builds the walkthrough form. The
 // worktree/files toggles default ON (a full delete); the branch toggle defaults OFF
 // (branches may be pushed — match `sf delete`, which keeps them without --prune).
-func newDeleteModel(m *Model, slug, name string) (*deleteModel, error) {
-	man, err := manifest.Load(m.cfg.ManifestPath(slug))
+func NewDelete(ctx Ctx, slug, name string) (*DeleteModel, error) {
+	man, err := manifest.Load(ctx.Cfg.ManifestPath(slug))
 	if err != nil {
 		return nil, err
 	}
 	vals := &deleteVals{}
 	for _, w := range man.Worktrees {
 		vals.repos = append(vals.repos, deleteRepoVals{
-			repo: w.Repo, branch: w.Branch, path: w.Path, pathAbs: m.cfg.Abs(w.Path),
+			repo: w.Repo, branch: w.Branch, path: w.Path, pathAbs: ctx.Cfg.Abs(w.Path),
 			removeWorktree: true, deleteFiles: true, deleteBranch: false,
 		})
 	}
-	d := &deleteModel{m: m, slug: slug, name: name, vals: vals}
-	d.form = newDeleteForm(name, vals).WithWidth(min(80, m.width-4))
+	d := &DeleteModel{ctx: ctx, slug: slug, name: name, vals: vals}
+	d.form = newDeleteForm(name, vals).WithWidth(min(80, ctx.Width-4))
 	return d, nil
 }
+
+// Init starts the walkthrough form.
+func (d *DeleteModel) Init() tea.Cmd { return d.form.Init() }
 
 // newDeleteForm: page 1 is the irreversible-warning + a Continue/Cancel confirm;
 // each later page is one repo with its three teardown toggles (hidden if cancelled).
@@ -94,7 +99,7 @@ func newDeleteForm(name string, v *deleteVals) *huh.Form {
 	return form(groups...)
 }
 
-func (d *deleteModel) Update(msg tea.Msg) (*deleteModel, tea.Cmd) {
+func (d *DeleteModel) Update(msg tea.Msg) (*DeleteModel, tea.Cmd) {
 	if k, ok := msg.(tea.KeyMsg); ok {
 		switch k.String() {
 		case "ctrl+c":
@@ -127,7 +132,7 @@ func (d *deleteModel) Update(msg tea.Msg) (*deleteModel, tea.Cmd) {
 				RemoveWorktree: r.removeWorktree, DeleteFiles: r.deleteFiles, DeleteBranch: r.deleteBranch,
 			}
 		}
-		d.log, d.err = superfeature.DeleteWalk(d.m.cfg, d.slug, plan)
+		d.log, d.err = superfeature.DeleteWalk(d.ctx.Cfg, d.slug, plan)
 		d.done = true
 		return d, nil
 	case huh.StateAborted:
@@ -136,18 +141,18 @@ func (d *deleteModel) Update(msg tea.Msg) (*deleteModel, tea.Cmd) {
 	return d, cmd
 }
 
-func (d *deleteModel) View() string {
+func (d *DeleteModel) View() string {
 	if d.done {
 		body := strings.Join(d.log, "\n")
 		if d.err != nil {
-			body += "\n\n" + errStyle.Render(i18n.T("tui.delete.err", d.err.Error()))
+			body += "\n\n" + components.ErrStyle.Render(i18n.T("tui.delete.err", d.err.Error()))
 		} else {
-			body = okStyle.Render(i18n.T("tui.delete.done", d.name)) + "\n\n" + body
+			body = components.OkStyle.Render(i18n.T("tui.delete.done", d.name)) + "\n\n" + body
 		}
-		return docStyle.Render(titleStyle.Render(i18n.T("tui.delete.title", d.name)) + "\n\n" + body + "\n\n" + helpStyle.Render(i18n.T("tui.delete.return")))
+		return components.DocStyle.Render(components.TitleStyle.Render(i18n.T("tui.delete.title", d.name)) + "\n\n" + body + "\n\n" + components.HelpStyle.Render(i18n.T("tui.delete.return")))
 	}
-	return docStyle.Render(titleStyle.Render(i18n.T("tui.delete.title", d.name)) + "\n\n" + d.form.View() + "\n" + helpStyle.Render(i18n.T("tui.delete.help")))
+	return components.DocStyle.Render(components.TitleStyle.Render(i18n.T("tui.delete.title", d.name)) + "\n\n" + d.form.View() + "\n" + components.HelpStyle.Render(i18n.T("tui.delete.help")))
 }
 
 // backToFeatures rebuilds + shows the (now-updated) super-features list.
-func backToFeatures() tea.Msg { return openFeaturesMsg{} }
+func backToFeatures() tea.Msg { return OpenFeaturesMsg{} }

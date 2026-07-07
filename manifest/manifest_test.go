@@ -4,17 +4,19 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/JoshuaLM114/workwood/models"
 )
 
 func TestSaveLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "voice.yaml")
-	in := &Manifest{
+	in := &models.Manifest{
 		Feature:     "voice",
 		Description: "voice pipeline",
 		Created:     "2026-06-15",
 		Vars:        map[string]string{"namespace": "dev-voice"},
-		Worktrees: []Worktree{
+		Worktrees: []models.Worktree{
 			{Repo: "api", Branch: "voice/integrate", Base: "main", Path: "voice/api"},
 			{Repo: "api", Branch: "voice/experiment", Base: "main", Path: "voice/api--experiment"},
 		},
@@ -42,7 +44,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 
 func TestIDProjectRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "voice.yaml")
-	in := &Manifest{ID: "feat-uuid", Project: "proj-uuid", Feature: "voice"}
+	in := &models.Manifest{ID: "feat-uuid", Project: "proj-uuid", Feature: "voice"}
 	if err := Save(path, in); err != nil {
 		t.Fatal(err)
 	}
@@ -87,10 +89,10 @@ func TestDefaultShorthand(t *testing.T) {
 }
 
 func TestBranchPrefix(t *testing.T) {
-	if got := (&Manifest{Feature: "voice", Shorthand: "v"}).BranchPrefix(); got != "v" {
+	if got := (&models.Manifest{Feature: "voice", Shorthand: "v"}).BranchPrefix(); got != "v" {
 		t.Errorf("with shorthand: got %q, want v", got)
 	}
-	if got := (&Manifest{Feature: "voice"}).BranchPrefix(); got != "voice" {
+	if got := (&models.Manifest{Feature: "voice"}).BranchPrefix(); got != "voice" {
 		t.Errorf("no shorthand: got %q, want voice (fallback to feature)", got)
 	}
 }

@@ -1,15 +1,18 @@
-package tui
+package menus
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/JoshuaLM114/workwood/i18n"
-	"github.com/JoshuaLM114/workwood/projectdef"
-	"github.com/JoshuaLM114/workwood/repos"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
+
+	"github.com/JoshuaLM114/workwood/i18n"
+	"github.com/JoshuaLM114/workwood/models"
+	"github.com/JoshuaLM114/workwood/projectdef"
+	"github.com/JoshuaLM114/workwood/repos"
+	"github.com/JoshuaLM114/workwood/tui/components"
 )
 
 type reposFormMode int
@@ -66,12 +69,12 @@ func (row repoRow) statusText() string {
 	}
 }
 
-// reposModel is the "Edit project" screen: add/remove the base repos in the
+// ReposModel is the "Edit project" screen: add/remove the base repos in the
 // committed workwood.yml, see which are actually cloned (real clones — not
 // worktrees) under main_dir, and fetch+pull them all. Edits write workwood.yml
 // immediately (it's just the project definition — clones/worktrees are untouched).
-type reposModel struct {
-	m          *Model
+type ReposModel struct {
+	ctx        Ctx
 	rows       []repoRow
 	cursor     int
 	form       *huh.Form
@@ -85,17 +88,17 @@ type reposModel struct {
 	height     int
 }
 
-func newReposModel(m *Model) *reposModel {
-	r := &reposModel{m: m}
+func NewRepos(ctx Ctx) *ReposModel {
+	r := &ReposModel{ctx: ctx}
 	r.spinner = spinner.New(spinner.WithSpinner(spinner.Dot))
 	r.rebuild()
 	return r
 }
 
-func (r *reposModel) rebuild() {
+func (r *ReposModel) rebuild() {
 	r.rows = r.rows[:0]
-	for _, repo := range r.m.pd.Repos {
-		base := r.m.cfg.BaseRepo(repo.Name)
+	for _, repo := range r.ctx.Pd.Repos {
+		base := r.ctx.Cfg.BaseRepo(repo.Name)
 		r.rows = append(r.rows, repoRow{
 			name:   repo.Name,
 			branch: repo.DefaultBranch,
@@ -112,9 +115,9 @@ func (r *reposModel) rebuild() {
 	}
 }
 
-func (r *reposModel) setSize(w, h int) { r.width, r.height = w, h }
+func (r *ReposModel) SetSize(w, h int) { r.width, r.height = w, h }
 
-func (r *reposModel) Update(msg tea.Msg) (*reposModel, tea.Cmd) {
+func (r *ReposModel) Update(msg tea.Msg) (*ReposModel, tea.Cmd) {
 	if r.form != nil {
 		if k, ok := msg.(tea.KeyMsg); ok {
 			switch k.String() {
@@ -162,9 +165,9 @@ func (r *reposModel) Update(msg tea.Msg) (*reposModel, tea.Cmd) {
 		r.busy = false
 		r.rebuild()
 		if msg.err != nil {
-			r.status = errStyle.Render(i18n.T("tui.repos.sync_failed", msg.err.Error()))
+			r.status = components.ErrStyle.Render(i18n.T("tui.repos.sync_failed", msg.err.Error()))
 		} else {
-			r.status = okStyle.Render(i18n.T("tui.repos.synced", len(msg.log)))
+			r.status = components.OkStyle.Render(i18n.T("tui.repos.synced", len(msg.log)))
 		}
 		return r, nil
 
@@ -179,7 +182,7 @@ func (r *reposModel) Update(msg tea.Msg) (*reposModel, tea.Cmd) {
 		case "ctrl+c":
 			return r, tea.Quit
 		case "esc":
-			return r, func() tea.Msg { return backMsg{} }
+			return r, func() tea.Msg { return BackMsg{} }
 		case "up", "k":
 			if r.cursor > 0 {
 				r.cursor--
@@ -194,10 +197,10 @@ func (r *reposModel) Update(msg tea.Msg) (*reposModel, tea.Cmd) {
 			r.formMode = rfAdd
 			return r, r.form.Init()
 		case "e":
-			if r.cursor >= 0 && r.cursor < len(r.m.pd.Repos) {
-				repo := r.m.pd.Repos[r.cursor]
+			if r.cursor >= 0 && r.cursor < len(r.ctx.Pd.Repos) {
+				repo := r.ctx.Pd.Repos[r.cursor]
 				r.branchVals = branchVals{branch: repo.DefaultBranch}
-				branches := repos.Branches(r.m.cfg.BaseRepo(repo.Name))
+				branches := repos.Branches(r.ctx.Cfg.BaseRepo(repo.Name))
 				r.form = newEditBranchForm(branches, &r.branchVals).WithWidth(min(72, r.width-2))
 				r.formMode = rfEditBranch
 				return r, r.form.Init()
@@ -215,8 +218,8 @@ func (r *reposModel) Update(msg tea.Msg) (*reposModel, tea.Cmd) {
 	return r, nil
 }
 
-func (r *reposModel) syncCmd() tea.Cmd {
-	cfg, pd := r.m.cfg, r.m.pd
+func (r *ReposModel) syncCmd() tea.Cmd {
+	cfg, pd := r.ctx.Cfg, r.ctx.Pd
 	return func() tea.Msg {
 		log, err := repos.Sync(cfg, pd)
 		return reposDoneMsg{log: log, err: err}
@@ -226,7 +229,7 @@ func (r *reposModel) syncCmd() tea.Cmd {
 // onFormDone handles a completed form and returns any follow-up command. rfAdd
 // (step 1) doesn't create the repo — it validates the name, then fetches the
 // remote's branches so step 2 can offer a branch dropdown.
-func (r *reposModel) onFormDone() tea.Cmd {
+func (r *ReposModel) onFormDone() tea.Cmd {
 	switch r.formMode {
 	case rfAdd:
 		return r.beginAdd()
@@ -241,16 +244,16 @@ func (r *reposModel) onFormDone() tea.Cmd {
 }
 
 // beginAdd validates the new repo name then kicks off the remote-branch fetch.
-func (r *reposModel) beginAdd() tea.Cmd {
+func (r *ReposModel) beginAdd() tea.Cmd {
 	r.form = nil
 	r.formMode = rfNone
 	name := strings.TrimSpace(r.repoVals.name)
 	if name == "" {
 		return nil
 	}
-	for _, e := range r.m.pd.Repos {
+	for _, e := range r.ctx.Pd.Repos {
 		if e.Name == name {
-			r.status = errStyle.Render(i18n.T("tui.repos.exists", name))
+			r.status = components.ErrStyle.Render(i18n.T("tui.repos.exists", name))
 			return nil
 		}
 	}
@@ -263,7 +266,7 @@ func (r *reposModel) beginAdd() tea.Cmd {
 }
 
 // addRepo (step 2) appends the repo with the chosen default branch.
-func (r *reposModel) addRepo() {
+func (r *ReposModel) addRepo() {
 	name := strings.TrimSpace(r.repoVals.name)
 	if name == "" {
 		return
@@ -272,58 +275,58 @@ func (r *reposModel) addRepo() {
 	if branch == "" {
 		branch = "main"
 	}
-	r.m.pd.Repos = append(r.m.pd.Repos, projectdef.Repo{
+	r.ctx.Pd.Repos = append(r.ctx.Pd.Repos, models.Repo{
 		Name: name, DefaultBranch: branch, URL: strings.TrimSpace(r.repoVals.url),
 	})
 	r.save()
 	r.rebuild()
-	r.status = okStyle.Render(i18n.T("tui.repos.added", name))
+	r.status = components.OkStyle.Render(i18n.T("tui.repos.added", name))
 }
 
 // editBranch sets a repo's default branch in workwood.yml, then checks the base
 // clone out to it. A checkout failure (missing branch, dirty tree, …) is reported
 // but the config change stands — the Active column then shows the divergence.
-func (r *reposModel) editBranch() {
-	if r.cursor < 0 || r.cursor >= len(r.m.pd.Repos) {
+func (r *ReposModel) editBranch() {
+	if r.cursor < 0 || r.cursor >= len(r.ctx.Pd.Repos) {
 		return
 	}
 	branch := strings.TrimSpace(r.branchVals.branch)
 	if branch == "" {
 		return
 	}
-	repo := &r.m.pd.Repos[r.cursor]
+	repo := &r.ctx.Pd.Repos[r.cursor]
 	repo.DefaultBranch = branch
 	r.save()
 
-	base := r.m.cfg.BaseRepo(repo.Name)
+	base := r.ctx.Cfg.BaseRepo(repo.Name)
 	if repos.ClassifyClone(base) != repos.StateClone {
 		r.rebuild()
-		r.status = okStyle.Render(i18n.T("tui.repos.default_set", repo.Name, branch))
+		r.status = components.OkStyle.Render(i18n.T("tui.repos.default_set", repo.Name, branch))
 		return
 	}
 	if err := repos.Checkout(base, branch); err != nil {
 		r.rebuild()
-		r.status = errStyle.Render(i18n.T("tui.repos.checkout_failed", branch, err.Error()))
+		r.status = components.ErrStyle.Render(i18n.T("tui.repos.checkout_failed", branch, err.Error()))
 		return
 	}
 	r.rebuild()
-	r.status = okStyle.Render(i18n.T("tui.repos.checked_out", repo.Name, branch))
+	r.status = components.OkStyle.Render(i18n.T("tui.repos.checked_out", repo.Name, branch))
 }
 
-func (r *reposModel) removeSelected() {
-	if r.cursor < 0 || r.cursor >= len(r.m.pd.Repos) {
+func (r *ReposModel) removeSelected() {
+	if r.cursor < 0 || r.cursor >= len(r.ctx.Pd.Repos) {
 		return
 	}
-	name := r.m.pd.Repos[r.cursor].Name
-	r.m.pd.Repos = append(r.m.pd.Repos[:r.cursor], r.m.pd.Repos[r.cursor+1:]...)
+	name := r.ctx.Pd.Repos[r.cursor].Name
+	r.ctx.Pd.Repos = append(r.ctx.Pd.Repos[:r.cursor], r.ctx.Pd.Repos[r.cursor+1:]...)
 	r.save()
 	r.rebuild()
-	r.status = okStyle.Render(i18n.T("tui.repos.removed", name))
+	r.status = components.OkStyle.Render(i18n.T("tui.repos.removed", name))
 }
 
-func (r *reposModel) save() {
-	if err := projectdef.Save(r.m.cfg.ProjectDef, r.m.pd); err != nil {
-		r.status = errStyle.Render(i18n.T("tui.repos.save_failed", err.Error()))
+func (r *ReposModel) save() {
+	if err := projectdef.Save(r.ctx.Cfg.ProjectDef, r.ctx.Pd); err != nil {
+		r.status = components.ErrStyle.Render(i18n.T("tui.repos.save_failed", err.Error()))
 	}
 }
 
@@ -341,32 +344,32 @@ func stateLabel(s repos.CloneState) string {
 	}
 }
 
-func (r *reposModel) View() string {
+func (r *ReposModel) View() string {
 	if r.busy {
 		msg := r.status
 		if strings.TrimSpace(msg) == "" {
 			msg = i18n.T("tui.editor.working")
 		}
 		body := r.spinner.View() + "  " + msg
-		return docStyle.Render(titleStyle.Render(i18n.T("tui.editor.loading")) + "\n\n" + body + "\n\n" + helpStyle.Render(i18n.T("tui.editor.loading_hint")))
+		return components.DocStyle.Render(components.TitleStyle.Render(i18n.T("tui.editor.loading")) + "\n\n" + body + "\n\n" + components.HelpStyle.Render(i18n.T("tui.editor.loading_hint")))
 	}
 	if r.form != nil {
 		title := i18n.T("tui.repos.add_title")
 		if r.formMode == rfEditBranch || r.formMode == rfAddBranch {
 			title = i18n.T("tui.repos.edit_branch_title")
 		}
-		return docStyle.Render(titleStyle.Render(title) + "\n\n" + r.form.View() + "\n" + helpStyle.Render(i18n.T("tui.form_help")))
+		return components.DocStyle.Render(components.TitleStyle.Render(title) + "\n\n" + r.form.View() + "\n" + components.HelpStyle.Render(i18n.T("tui.form_help")))
 	}
 
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(i18n.T("tui.repos.title", r.m.cfg.ProjectName)) + "\n\n")
+	b.WriteString(components.TitleStyle.Render(i18n.T("tui.repos.title", r.ctx.Cfg.ProjectName)) + "\n\n")
 
 	if len(r.rows) == 0 {
-		b.WriteString(dimStyle.Render(i18n.T("tui.repos.empty")) + "\n\n")
+		b.WriteString(components.DimStyle.Render(i18n.T("tui.repos.empty")) + "\n\n")
 	} else {
 		header := fmt.Sprintf("   %-18s %-16s %-16s %s",
 			i18n.T("tui.col.repo"), i18n.T("tui.repos.col_default"), i18n.T("tui.repos.col_active"), i18n.T("tui.repos.col_status"))
-		b.WriteString(dimStyle.Render(header) + "\n")
+		b.WriteString(components.DimStyle.Render(header) + "\n")
 		for i, row := range r.rows {
 			marker := "✓"
 			if row.state != repos.StateClone {
@@ -378,17 +381,17 @@ func (r *reposModel) View() string {
 			var line string
 			switch {
 			case i == r.cursor:
-				line = selectedRowStyle.Render(prefix + status)
+				line = components.SelectedRowStyle.Render(prefix + status)
 			case row.state != repos.StateClone:
-				line = errStyle.Render(prefix + status) // not a real clone → red
+				line = components.ErrStyle.Render(prefix + status) // not a real clone → red
 			case row.sync.OutOfSync():
-				line = prefix + warnStyle.Render(status) // behind origin → amber
+				line = prefix + components.WarnStyle.Render(status) // behind origin → amber
 			default:
 				line = prefix + status
 			}
 			// Flag a clone that's on a different branch than configured.
 			if row.diverged() {
-				line += "  " + warnStyle.Render(i18n.T("tui.repos.diverged", row.branch))
+				line += "  " + components.WarnStyle.Render(i18n.T("tui.repos.diverged", row.branch))
 			}
 			b.WriteString(line + "\n")
 		}
@@ -398,8 +401,8 @@ func (r *reposModel) View() string {
 	if r.status != "" {
 		b.WriteString(r.status + "\n")
 	}
-	b.WriteString(helpStyle.Render(i18n.T("tui.repos.help")))
-	return docStyle.Render(b.String())
+	b.WriteString(components.HelpStyle.Render(i18n.T("tui.repos.help")))
+	return components.DocStyle.Render(b.String())
 }
 
 // pad truncates or right-pads s to exactly w runes (keeps columns aligned).

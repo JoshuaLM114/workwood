@@ -16,21 +16,23 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/google/uuid"
+
 	"github.com/JoshuaLM114/workwood/action"
 	"github.com/JoshuaLM114/workwood/config"
-	"github.com/JoshuaLM114/workwood/gitx"
 	"github.com/JoshuaLM114/workwood/i18n"
+	"github.com/JoshuaLM114/workwood/libs/gitx"
 	"github.com/JoshuaLM114/workwood/manifest"
+	"github.com/JoshuaLM114/workwood/models"
 	"github.com/JoshuaLM114/workwood/projectdef"
 	"github.com/JoshuaLM114/workwood/repos"
 	"github.com/JoshuaLM114/workwood/targetcfg"
-	"github.com/google/uuid"
 )
 
 // CheckReposReady errors when the project has no repos defined, or any configured
 // repo isn't a real main clone yet — the precondition for creating super-features
 // (worktrees are cut from those clones).
-func CheckReposReady(cfg *config.Config) error {
+func CheckReposReady(cfg *models.Config) error {
 	pd, err := projectdef.Load(cfg.ProjectDef)
 	if err != nil {
 		return err
@@ -45,7 +47,7 @@ func CheckReposReady(cfg *config.Config) error {
 }
 
 // Repos returns the distinct repo names in a feature's manifest, in order.
-func Repos(cfg *config.Config, slug string) ([]string, error) {
+func Repos(cfg *models.Config, slug string) ([]string, error) {
 	m, err := manifest.Load(cfg.ManifestPath(slug))
 	if err != nil {
 		return nil, err
@@ -63,7 +65,7 @@ func Repos(cfg *config.Config, slug string) ([]string, error) {
 
 // checkProject errors when a manifest's parent UUID disagrees with the resolved
 // project — i.e. a manifest copied in from a different super-repo.
-func checkProject(cfg *config.Config, m *manifest.Manifest) error {
+func checkProject(cfg *models.Config, m *models.Manifest) error {
 	if m.Project != "" && m.Project != cfg.ProjectID {
 		return i18n.Err("err.manifest_wrong_project", m.Feature, m.Project, cfg.ProjectID)
 	}
@@ -73,7 +75,7 @@ func checkProject(cfg *config.Config, m *manifest.Manifest) error {
 // actionSet resolves the target set + manifest vars for running/initing an action
 // against a feature (validating the manifest's project + UUID, self-healing the
 // back-link). With override==nil it uses the feature's persisted working set.
-func actionSet(cfg *config.Config, slug string, override targetcfg.Set) (targetcfg.Set, map[string]string, error) {
+func actionSet(cfg *models.Config, slug string, override models.Set) (models.Set, map[string]string, error) {
 	m, err := manifest.Load(cfg.ManifestPath(slug))
 	if err != nil {
 		return nil, nil, err
@@ -101,7 +103,7 @@ func actionSet(cfg *config.Config, slug string, override targetcfg.Set) (targetc
 // RunAction runs the named action against a feature's targets. With override==nil
 // it uses the feature's persisted working set; pass a non-nil Set to run against
 // an explicit configuration (e.g. a loaded preset).
-func RunAction(cfg *config.Config, slug, name string, override targetcfg.Set) error {
+func RunAction(cfg *models.Config, slug, name string, override models.Set) error {
 	set, vars, err := actionSet(cfg, slug, override)
 	if err != nil {
 		return err
@@ -111,7 +113,7 @@ func RunAction(cfg *config.Config, slug, name string, override targetcfg.Set) er
 
 // InitAction runs the action's Init — its bootstrap that creates the minimal files
 // it needs in the selected targets (idempotent). Returns the action's output.
-func InitAction(cfg *config.Config, slug, name string, override targetcfg.Set) (string, error) {
+func InitAction(cfg *models.Config, slug, name string, override models.Set) (string, error) {
 	set, vars, err := actionSet(cfg, slug, override)
 	if err != nil {
 		return "", err
@@ -154,7 +156,7 @@ func validName(s string) error {
 }
 
 // underData reports whether abs is strictly inside the data dir's features/ tree.
-func underData(cfg *config.Config, abs string) bool {
+func underData(cfg *models.Config, abs string) bool {
 	rel, err := filepath.Rel(cfg.FeaturesDir, filepath.Clean(abs))
 	if err != nil {
 		return false
@@ -165,14 +167,14 @@ func underData(cfg *config.Config, abs string) bool {
 // safeRemoveAll removes abs only when it resolves inside the features tree — the
 // last-line guard so a corrupt or hand-edited manifest path can never delete
 // outside $WORKWOOD_DATA.
-func safeRemoveAll(cfg *config.Config, abs string) error {
+func safeRemoveAll(cfg *models.Config, abs string) error {
 	if !underData(cfg, abs) {
 		return i18n.Err("err.unsafe_path", abs)
 	}
 	return os.RemoveAll(abs)
 }
 
-func Create(cfg *config.Config, slug, shorthand, desc string) error {
+func Create(cfg *models.Config, slug, shorthand, desc string) error {
 	if err := validName(slug); err != nil {
 		return err
 	}
@@ -190,14 +192,14 @@ func Create(cfg *config.Config, slug, shorthand, desc string) error {
 	if shorthand == "" {
 		shorthand = manifest.DefaultShorthand(slug)
 	}
-	m := &manifest.Manifest{
+	m := &models.Manifest{
 		ID:          uuid.NewString(),
 		Project:     cfg.ProjectID,
 		Feature:     slug,
 		Shorthand:   shorthand,
 		Description: desc,
 		Created:     time.Now().Format("2006-01-02"),
-		Worktrees:   []manifest.Worktree{},
+		Worktrees:   []models.Worktree{},
 	}
 	if err := manifest.Save(path, m); err != nil {
 		return err
@@ -232,18 +234,18 @@ type AddSpec struct {
 
 // Add provisions one worktree for an existing feature and records it in the
 // manifest.
-func Add(cfg *config.Config, pd *projectdef.File, name string, spec AddSpec) (manifest.Worktree, error) {
+func Add(cfg *models.Config, pd *models.ProjectDef, name string, spec AddSpec) (models.Worktree, error) {
 	if err := validName(name); err != nil {
-		return manifest.Worktree{}, err
+		return models.Worktree{}, err
 	}
 	path := cfg.ManifestPath(name)
 	m, err := manifest.Load(path)
 	if err != nil {
-		return manifest.Worktree{}, i18n.Errw(err, "err.no_manifest_create", path)
+		return models.Worktree{}, i18n.Errw(err, "err.no_manifest_create", path)
 	}
 	wt, err := provision(cfg, pd, m, spec)
 	if err != nil {
-		return manifest.Worktree{}, err
+		return models.Worktree{}, err
 	}
 	m.Worktrees = append(m.Worktrees, wt)
 	if err := manifest.Save(path, m); err != nil {
@@ -256,14 +258,14 @@ func Add(cfg *config.Config, pd *projectdef.File, name string, spec AddSpec) (ma
 // returns the entry to record. It carries every guard: branch prefixing, the
 // ref-hierarchy guard, attach-to-existing precedence, and directory-collision
 // suffixing.
-func provision(cfg *config.Config, pd *projectdef.File, m *manifest.Manifest, spec AddSpec) (manifest.Worktree, error) {
+func provision(cfg *models.Config, pd *models.ProjectDef, m *models.Manifest, spec AddSpec) (models.Worktree, error) {
 	if err := validName(spec.Repo); err != nil {
-		return manifest.Worktree{}, err
+		return models.Worktree{}, err
 	}
 	branch := ResolveBranchWith(m.BranchPrefix(), spec.Sub, spec.OmitFeaturePrefix)
 	baseRepo := cfg.BaseRepo(spec.Repo)
 	if !gitx.IsRepo(baseRepo) {
-		return manifest.Worktree{}, i18n.Err("err.base_repo_missing", baseRepo)
+		return models.Worktree{}, i18n.Err("err.base_repo_missing", baseRepo)
 	}
 
 	// Where a NEW branch starts from: explicit --from, else the repo's configured
@@ -280,15 +282,15 @@ func provision(cfg *config.Config, pd *projectdef.File, m *manifest.Manifest, sp
 	gitx.Fetch(baseRepo)
 
 	if err := checkRefHierarchy(baseRepo, branch); err != nil {
-		return manifest.Worktree{}, err
+		return models.Worktree{}, err
 	}
 
 	rel := allocPath(cfg, m, spec.Repo, branch)
 	abs := cfg.Abs(rel)
 	if err := addWorktree(baseRepo, branch, base, abs); err != nil {
-		return manifest.Worktree{}, err
+		return models.Worktree{}, err
 	}
-	return manifest.Worktree{Repo: spec.Repo, Branch: branch, Base: base, Path: rel}, nil
+	return models.Worktree{Repo: spec.Repo, Branch: branch, Base: base, Path: rel}, nil
 }
 
 // addWorktree attaches to whatever branch source exists, in priority order:
@@ -335,7 +337,7 @@ func checkRefHierarchy(baseRepo, branch string) error {
 // allocPath chooses the features_dir-relative worktree dir for a new entry:
 // <feature>/<repo>, or suffixed with the branch slug when that dir is already
 // taken (a 2nd branch of the same repo).
-func allocPath(cfg *config.Config, m *manifest.Manifest, repo, branch string) string {
+func allocPath(cfg *models.Config, m *models.Manifest, repo, branch string) string {
 	dir := repo
 	if dirTaken(cfg, m, m.Feature+"/"+dir) {
 		// On a 2nd worktree of the same repo, suffix the dir with the branch's
@@ -348,7 +350,7 @@ func allocPath(cfg *config.Config, m *manifest.Manifest, repo, branch string) st
 
 // dirTaken reports whether a features_dir-relative path is already used, either
 // on disk or by an entry already in the manifest.
-func dirTaken(cfg *config.Config, m *manifest.Manifest, rel string) bool {
+func dirTaken(cfg *models.Config, m *models.Manifest, rel string) bool {
 	if _, err := os.Stat(cfg.Abs(rel)); err == nil {
 		return true
 	}
@@ -382,7 +384,7 @@ func slugify(s string) string {
 // fetching), rebuilding would invent a brand-new local branch. onNew, if non-nil,
 // is asked first — return false to skip that worktree instead of creating it. A
 // nil onNew creates them without asking (the non-interactive default).
-func Up(cfg *config.Config, name string, onNew func(repo, branch string) bool) ([]string, error) {
+func Up(cfg *models.Config, name string, onNew func(repo, branch string) bool) ([]string, error) {
 	path := cfg.ManifestPath(name)
 	m, err := manifest.Load(path)
 	if err != nil {
@@ -427,7 +429,7 @@ func Up(cfg *config.Config, name string, onNew func(repo, branch string) bool) (
 
 // Down detaches every worktree (branches kept) and drops the feature dir. The
 // manifest is kept so it can be rebuilt.
-func Down(cfg *config.Config, name string) ([]string, error) {
+func Down(cfg *models.Config, name string) ([]string, error) {
 	if err := validName(name); err != nil {
 		return nil, err
 	}
@@ -447,7 +449,7 @@ func Down(cfg *config.Config, name string) ([]string, error) {
 
 // removeWorktreeDir removes a worktree via git, falling back to rm -rf when git
 // doesn't know about it (or the base clone is gone).
-func removeWorktreeDir(cfg *config.Config, repo, relPath string) {
+func removeWorktreeDir(cfg *models.Config, repo, relPath string) {
 	baseRepo := cfg.BaseRepo(repo)
 	abs := cfg.Abs(relPath)
 	if gitx.IsRepo(baseRepo) {
@@ -468,7 +470,7 @@ type RemoveSpec struct {
 }
 
 // Remove drops a SINGLE worktree from a feature (vs. Down which removes all).
-func Remove(cfg *config.Config, name string, spec RemoveSpec) (string, error) {
+func Remove(cfg *models.Config, name string, spec RemoveSpec) (string, error) {
 	path := cfg.ManifestPath(name)
 	m, err := manifest.Load(path)
 	if err != nil {
@@ -480,7 +482,7 @@ func Remove(cfg *config.Config, name string, spec RemoveSpec) (string, error) {
 		want = ResolveBranch(m.BranchPrefix(), spec.Sub)
 	}
 
-	var matches []manifest.Worktree
+	var matches []models.Worktree
 	for _, w := range m.Worktrees {
 		if w.Repo != spec.Repo {
 			continue
@@ -520,7 +522,7 @@ func Remove(cfg *config.Config, name string, spec RemoveSpec) (string, error) {
 
 // RemoveBranchEntry removes a worktree's checkout, drops it from m (in memory),
 // and optionally deletes its local branch. The caller saves the manifest.
-func RemoveBranchEntry(cfg *config.Config, m *manifest.Manifest, w manifest.Worktree, prune bool) error {
+func RemoveBranchEntry(cfg *models.Config, m *models.Manifest, w models.Worktree, prune bool) error {
 	removeWorktreeDir(cfg, w.Repo, w.Path)
 	idx := m.Find(w.Repo, w.Branch)
 	if idx >= 0 {
@@ -537,7 +539,7 @@ func RemoveBranchEntry(cfg *config.Config, m *manifest.Manifest, w manifest.Work
 
 // Delete tears down all worktrees, optionally prunes the branches, and removes
 // the manifest.
-func Delete(cfg *config.Config, name string, pruneBranches bool) error {
+func Delete(cfg *models.Config, name string, pruneBranches bool) error {
 	if err := validName(name); err != nil {
 		return err
 	}
@@ -579,7 +581,7 @@ type RepoTeardown struct {
 // It is the guided counterpart to Delete: each worktree's files/registration and
 // branch are removed only where the plan says so; kept artifacts are left in place
 // (orphaned by the user's choice). Destructive + not reversible. Returns a log.
-func DeleteWalk(cfg *config.Config, name string, plan []RepoTeardown) ([]string, error) {
+func DeleteWalk(cfg *models.Config, name string, plan []RepoTeardown) ([]string, error) {
 	if err := validName(name); err != nil {
 		return nil, err
 	}
@@ -656,7 +658,7 @@ type StatusRow struct {
 }
 
 // Status reports per-worktree branch + dirty state for a feature.
-func Status(cfg *config.Config, name string) (*manifest.Manifest, []StatusRow, error) {
+func Status(cfg *models.Config, name string) (*models.Manifest, []StatusRow, error) {
 	m, err := manifest.Load(cfg.ManifestPath(name))
 	if err != nil {
 		return nil, nil, err
@@ -676,14 +678,14 @@ func Status(cfg *config.Config, name string) (*manifest.Manifest, []StatusRow, e
 }
 
 // List loads every super-feature manifest.
-func List(cfg *config.Config) ([]*manifest.Manifest, error) {
+func List(cfg *models.Config) ([]*models.Manifest, error) {
 	return manifest.List(cfg.ManifestsDir)
 }
 
 // EditResult reports what an ApplyEdit run changed.
 type EditResult struct {
-	Added   []manifest.Worktree
-	Removed []manifest.Worktree
+	Added   []models.Worktree
+	Removed []models.Worktree
 	Log     []string
 }
 
@@ -691,7 +693,7 @@ type EditResult struct {
 // the description, removes the staged worktrees, and provisions the staged
 // additions — then saves the manifest once. This is what makes a future TUI an
 // *editor* rather than a one-shot creator.
-func ApplyEdit(cfg *config.Config, pd *projectdef.File, name, description string, adds []AddSpec, removes []RemoveSpec) (*EditResult, error) {
+func ApplyEdit(cfg *models.Config, pd *models.ProjectDef, name, description string, adds []AddSpec, removes []RemoveSpec) (*EditResult, error) {
 	path := cfg.ManifestPath(name)
 	m, err := manifest.Load(path)
 	if err != nil {
@@ -756,8 +758,8 @@ type Orphan struct {
 // DiagnoseResult reports a feature's drift between its manifest and reality.
 type DiagnoseResult struct {
 	Feature string
-	Orphans []Orphan            // on disk under the feature dir, NOT in the manifest
-	Missing []manifest.Worktree // in the manifest, with NO checkout on disk
+	Orphans []Orphan          // on disk under the feature dir, NOT in the manifest
+	Missing []models.Worktree // in the manifest, with NO checkout on disk
 }
 
 // OK reports whether the feature is in sync.
@@ -765,7 +767,7 @@ func (d *DiagnoseResult) OK() bool { return len(d.Orphans) == 0 && len(d.Missing
 
 // Diagnose compares a feature's manifest against what's on disk: worktree dirs not
 // recorded (orphans) and recorded worktrees with no checkout (missing). Read-only.
-func Diagnose(cfg *config.Config, pd *projectdef.File, name string) (*DiagnoseResult, error) {
+func Diagnose(cfg *models.Config, pd *models.ProjectDef, name string) (*DiagnoseResult, error) {
 	m, err := manifest.Load(cfg.ManifestPath(name))
 	if err != nil {
 		return nil, err
@@ -784,7 +786,7 @@ func Diagnose(cfg *config.Config, pd *projectdef.File, name string) (*DiagnoseRe
 	}
 	entries, _ := os.ReadDir(cfg.FeatureDir(name))
 	for _, e := range entries {
-		if !e.IsDir() || e.Name() == config.RepoWorkwoodDirName {
+		if !e.IsDir() || e.Name() == models.RepoWorkwoodDirName {
 			continue
 		}
 		rel := name + "/" + e.Name()
@@ -814,7 +816,7 @@ func Diagnose(cfg *config.Config, pd *projectdef.File, name string) (*DiagnoseRe
 
 // AdoptOrphan records an orphan worktree in the manifest (recovering it). Needs a
 // known repo + a resolvable branch.
-func AdoptOrphan(cfg *config.Config, name string, o Orphan) error {
+func AdoptOrphan(cfg *models.Config, name string, o Orphan) error {
 	if o.Repo == "" || o.Branch == "" {
 		return i18n.Err("err.adopt_unknown", o.Path)
 	}
@@ -826,13 +828,13 @@ func AdoptOrphan(cfg *config.Config, name string, o Orphan) error {
 	if m.Find(o.Repo, o.Branch) >= 0 {
 		return nil // already tracked
 	}
-	m.Worktrees = append(m.Worktrees, manifest.Worktree{Repo: o.Repo, Branch: o.Branch, Base: o.Base, Path: o.Path})
+	m.Worktrees = append(m.Worktrees, models.Worktree{Repo: o.Repo, Branch: o.Branch, Base: o.Base, Path: o.Path})
 	return manifest.Save(path, m)
 }
 
 // RemoveOrphan deletes an orphan worktree from disk (git worktree remove, falling
 // back to a recursive delete + prune). Destructive.
-func RemoveOrphan(cfg *config.Config, o Orphan) error {
+func RemoveOrphan(cfg *models.Config, o Orphan) error {
 	if o.Repo != "" {
 		baseRepo := cfg.BaseRepo(o.Repo)
 		if gitx.IsRepo(baseRepo) {
@@ -851,7 +853,7 @@ func RemoveOrphan(cfg *config.Config, o Orphan) error {
 
 // RebuildMissing re-creates a manifest worktree whose checkout is gone, pruning any
 // stale registration first; like Up it attaches to the existing branch.
-func RebuildMissing(cfg *config.Config, w manifest.Worktree) error {
+func RebuildMissing(cfg *models.Config, w models.Worktree) error {
 	baseRepo := cfg.BaseRepo(w.Repo)
 	if !gitx.IsRepo(baseRepo) {
 		return i18n.Err("err.base_repo_missing", baseRepo)
@@ -862,7 +864,7 @@ func RebuildMissing(cfg *config.Config, w manifest.Worktree) error {
 }
 
 // DropMissing removes a worktree entry from the manifest (it has no checkout).
-func DropMissing(cfg *config.Config, name string, w manifest.Worktree) error {
+func DropMissing(cfg *models.Config, name string, w models.Worktree) error {
 	path := cfg.ManifestPath(name)
 	m, err := manifest.Load(path)
 	if err != nil {
@@ -884,8 +886,8 @@ func DropMissing(cfg *config.Config, name string, w manifest.Worktree) error {
 type ReconcilePlan struct {
 	AdoptOrphans   []Orphan
 	RemoveOrphans  []Orphan
-	RebuildMissing []manifest.Worktree
-	DropMissing    []manifest.Worktree
+	RebuildMissing []models.Worktree
+	DropMissing    []models.Worktree
 }
 
 // ReconcileOutcome is one applied decision: its human message on success, or the
@@ -899,7 +901,7 @@ type ReconcileOutcome struct {
 // (adopt, remove, rebuild, drop). Like the doctor front-ends it replaces, it does
 // NOT stop on the first error — a failure is recorded in its outcome and the
 // remaining items still run.
-func Reconcile(cfg *config.Config, name string, plan ReconcilePlan) []ReconcileOutcome {
+func Reconcile(cfg *models.Config, name string, plan ReconcilePlan) []ReconcileOutcome {
 	var out []ReconcileOutcome
 	do := func(err error, msg string) { out = append(out, ReconcileOutcome{Msg: msg, Err: err}) }
 	for _, o := range plan.AdoptOrphans {

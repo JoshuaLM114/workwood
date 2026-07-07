@@ -9,10 +9,9 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/JoshuaLM114/workwood/config"
-	"github.com/JoshuaLM114/workwood/gitx"
 	"github.com/JoshuaLM114/workwood/i18n"
-	"github.com/JoshuaLM114/workwood/projectdef"
+	"github.com/JoshuaLM114/workwood/libs/gitx"
+	"github.com/JoshuaLM114/workwood/models"
 )
 
 // CloneState classifies a base-clone directory under main_dir.
@@ -46,7 +45,7 @@ func ClassifyClone(dir string) CloneState {
 // Unready returns the names of configured repos that are NOT a real main clone
 // (missing, not a git repo, or a stray worktree) — the repos that must be cloned
 // before worktrees can be cut from them. An empty slice means every repo is ready.
-func Unready(cfg *config.Config, pd *projectdef.File) []string {
+func Unready(cfg *models.Config, pd *models.ProjectDef) []string {
 	var bad []string
 	for _, r := range pd.Repos {
 		if ClassifyClone(cfg.BaseRepo(r.Name)) != StateClone {
@@ -74,7 +73,7 @@ func AheadBehind(dir string) SyncInfo {
 
 // FetchAll fetches every real clone (quiet, best-effort). It does NOT clone, pull,
 // or check anything out — it only refreshes origin refs so sync state is accurate.
-func FetchAll(cfg *config.Config, pd *projectdef.File) {
+func FetchAll(cfg *models.Config, pd *models.ProjectDef) {
 	for _, r := range pd.Repos {
 		dir := cfg.BaseRepo(r.Name)
 		if ClassifyClone(dir) == StateClone {
@@ -85,7 +84,7 @@ func FetchAll(cfg *config.Config, pd *projectdef.File) {
 
 // OutOfSync returns the names of clones that are behind their upstream (run after
 // FetchAll for current numbers).
-func OutOfSync(cfg *config.Config, pd *projectdef.File) []string {
+func OutOfSync(cfg *models.Config, pd *models.ProjectDef) []string {
 	var out []string
 	for _, r := range pd.Repos {
 		dir := cfg.BaseRepo(r.Name)
@@ -169,7 +168,7 @@ func Branches(dir string) []BranchRef {
 // Sync clones missing repos and fetches existing ones (parking each on its default
 // branch, fast-forwarded). Unlike Pull it captures git/gh output and returns a log,
 // so the TUI can run it without corrupting the terminal. Returns the lines done.
-func Sync(cfg *config.Config, pd *projectdef.File) ([]string, error) {
+func Sync(cfg *models.Config, pd *models.ProjectDef) ([]string, error) {
 	if err := os.MkdirAll(cfg.MainDir, 0o755); err != nil {
 		return nil, err
 	}
@@ -197,7 +196,7 @@ func Sync(cfg *config.Config, pd *projectdef.File) ([]string, error) {
 
 // Pull clones each configured repo into main_dir on first run and fetches it on
 // later runs, then parks it on its default branch fast-forwarded to origin.
-func Pull(cfg *config.Config, pd *projectdef.File) error {
+func Pull(cfg *models.Config, pd *models.ProjectDef) error {
 	if err := os.MkdirAll(cfg.MainDir, 0o755); err != nil {
 		return err
 	}
@@ -231,7 +230,7 @@ type Row struct {
 }
 
 // List reports each configured repo with its default branch and clone state.
-func List(cfg *config.Config, pd *projectdef.File) []Row {
+func List(cfg *models.Config, pd *models.ProjectDef) []Row {
 	rows := make([]Row, 0, len(pd.Repos))
 	for _, r := range pd.Repos {
 		rows = append(rows, Row{

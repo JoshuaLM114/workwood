@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/JoshuaLM114/workwood/config"
+	"github.com/JoshuaLM114/workwood/models"
 )
 
 func TestCommandContextAndEnv(t *testing.T) {
@@ -20,7 +20,7 @@ func TestCommandContextAndEnv(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(actionsDir, "noop"), []byte("#!/usr/bin/env bash\n# workwood-action: noop\nValidate() { true; }\nRun() { true; }\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config.Config{Root: dir, ActionsDir: actionsDir, FeaturesDir: dir}
+	cfg := &models.Config{Root: dir, ActionsDir: actionsDir, FeaturesDir: dir}
 
 	set := map[string]string{"api": "/abs/api"}
 	cmd, err := Command(cfg, "login", "noop", set, map[string]string{"ns": "dev"})
@@ -80,7 +80,7 @@ func TestListMarker(t *testing.T) {
 	write("notexec", "#!/bin/sh\n# workwood-action: x\n", 0o644)            // marked but not exec → ignored
 	write("decoy", "#!/bin/sh\n# workwood-actions-helper here\n", 0o755)    // lookalike token → ignored
 
-	cfg := &config.Config{ActionsDir: dir}
+	cfg := &models.Config{ActionsDir: dir}
 	got := List(cfg)
 	if len(got) != 2 {
 		t.Fatalf("want 2 actions, got %d: %+v", len(got), got)
@@ -127,7 +127,7 @@ func TestMethodsAndValidate(t *testing.T) {
 	// partial: missing Validate.
 	write("partial", "#!/usr/bin/env bash\n# workwood-action: partial\nRun() { :; }\n")
 
-	cfg := &config.Config{Root: dir, ActionsDir: actionsDir, FeaturesDir: dir}
+	cfg := &models.Config{Root: dir, ActionsDir: actionsDir, FeaturesDir: dir}
 	by := map[string]Action{}
 	for _, a := range List(cfg) {
 		by[a.Name] = a
@@ -174,7 +174,7 @@ func TestInit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := &config.Config{Root: dir, ActionsDir: actionsDir, FeaturesDir: dir}
+	cfg := &models.Config{Root: dir, ActionsDir: actionsDir, FeaturesDir: dir}
 	tgt := t.TempDir()
 	set := map[string]string{"svc": tgt}
 
@@ -210,7 +210,7 @@ func TestInit(t *testing.T) {
 
 func TestCommandUnknownAction(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &config.Config{Root: dir, ActionsDir: filepath.Join(dir, "actions"), FeaturesDir: dir}
+	cfg := &models.Config{Root: dir, ActionsDir: filepath.Join(dir, "actions"), FeaturesDir: dir}
 	if _, err := Command(cfg, "login", "missing", map[string]string{}, nil); err == nil {
 		t.Fatal("expected an error for a missing action")
 	}

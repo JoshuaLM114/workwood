@@ -184,7 +184,7 @@
   "tui.repos.form_name_desc": "directory name under main_dir and the repo's name",
   "tui.repos.form_branch": "Default branch",
   "tui.repos.form_url": "URL",
-  "tui.repos.form_url_desc": "git URL to clone from, e.g. git@github.com:you/repo.git",
+  "tui.repos.form_url_desc": "git URL to clone from, e.g. git@example.invalid:team/repo.git",
   "repos.fetched": "fetched %s",
   "repos.cloned": "cloned %s (%s)",
   "tui.repos.col_status": "Status",

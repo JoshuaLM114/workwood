@@ -24,8 +24,10 @@ name: my-project    # canonical name (immutable)
 repos:
   - name: api               # local dir name + the key used everywhere
     default_branch: main    # branch the base clone is parked on / features cut from
-    url: git@github.com:org/api.git   # REQUIRED — cloned verbatim (git clone <url>)
+    url: git@example.invalid:team/api.git   # REQUIRED — cloned verbatim (git clone <url>)
 ```
+
+Replace the placeholder clone URL with your repository's URL.
 
 There is **no `org`/`host`** — the `url` is the whole truth. Cloning uses plain
 `git clone`, so your normal git/ssh/credential-helper auth applies.

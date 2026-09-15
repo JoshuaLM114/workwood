@@ -36,9 +36,9 @@ func TestFindProjectViaFeatureLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	dataDir := t.TempDir()
-	featDir := filepath.Join(dataDir, "features", "voice")
+	featDir := filepath.Join(dataDir, "features", "demo")
 	cfg := &models.Config{Root: superRepo, DataDir: dataDir, ProjectID: "pid", FeaturesDir: filepath.Join(dataDir, "features")}
-	if err := WriteFeatureLink(cfg, "voice"); err != nil {
+	if err := WriteFeatureLink(cfg, "demo"); err != nil {
 		t.Fatal(err)
 	}
 	// From a worktree subdir deep inside the feature folder.
@@ -50,13 +50,13 @@ func TestFindProjectViaFeatureLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if root != superRepo || gotData != dataDir || feature != "voice" {
-		t.Fatalf("findProject = (%q,%q,%q), want (%q,%q,voice)", root, gotData, feature, superRepo, dataDir)
+	if root != superRepo || gotData != dataDir || feature != "demo" {
+		t.Fatalf("findProject = (%q,%q,%q), want (%q,%q,demo)", root, gotData, feature, superRepo, dataDir)
 	}
 
 	// A link pointing at a vanished super-repo is a StaleLinkError.
 	cfg.Root = filepath.Join(t.TempDir(), "gone")
-	if err := WriteFeatureLink(cfg, "voice"); err != nil {
+	if err := WriteFeatureLink(cfg, "demo"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, _, err := findProject(deep); err == nil {
@@ -73,10 +73,10 @@ func TestLocateProjectViaLink(t *testing.T) {
 	}
 	dataDir := t.TempDir()
 	cfg := &models.Config{Root: superRepo, DataDir: dataDir, ProjectID: "pid", FeaturesDir: filepath.Join(dataDir, "features")}
-	if err := WriteFeatureLink(cfg, "voice"); err != nil {
+	if err := WriteFeatureLink(cfg, "demo"); err != nil {
 		t.Fatal(err)
 	}
-	deep := filepath.Join(dataDir, "features", "voice", "api")
+	deep := filepath.Join(dataDir, "features", "demo", "api")
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -84,8 +84,8 @@ func TestLocateProjectViaLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loc.Root != superRepo || loc.DataDir != dataDir || loc.ActiveFeature != "voice" {
-		t.Fatalf("loc = %+v, want root=%q data=%q feature=voice", loc, superRepo, dataDir)
+	if loc.Root != superRepo || loc.DataDir != dataDir || loc.ActiveFeature != "demo" {
+		t.Fatalf("loc = %+v, want root=%q data=%q feature=demo", loc, superRepo, dataDir)
 	}
 }
 
@@ -98,32 +98,32 @@ func TestEnsureFeatureLink(t *testing.T) {
 	cfg := &models.Config{Root: superRepo, DataDir: dataDir, ProjectID: "pid", FeaturesDir: filepath.Join(dataDir, "features")}
 
 	// Missing → regenerated, then valid.
-	if regen, err := EnsureFeatureLink(cfg, "voice"); err != nil || !regen {
+	if regen, err := EnsureFeatureLink(cfg, "demo"); err != nil || !regen {
 		t.Fatalf("missing link should regenerate: regen=%v err=%v", regen, err)
 	}
-	if !FeatureLinkValid(cfg, "voice") {
+	if !FeatureLinkValid(cfg, "demo") {
 		t.Fatal("link should be valid right after writing")
 	}
 	// Already valid → not rewritten.
-	if regen, _ := EnsureFeatureLink(cfg, "voice"); regen {
+	if regen, _ := EnsureFeatureLink(cfg, "demo"); regen {
 		t.Error("a valid link should not be rewritten")
 	}
 
 	// Inconsistent (super-repo moved) → invalid → regenerated for the new config.
 	moved := &models.Config{Root: t.TempDir(), DataDir: dataDir, ProjectID: "pid", FeaturesDir: cfg.FeaturesDir}
-	if FeatureLinkValid(moved, "voice") {
+	if FeatureLinkValid(moved, "demo") {
 		t.Fatal("a link pointing elsewhere should be invalid for the moved config")
 	}
-	if regen, _ := EnsureFeatureLink(moved, "voice"); !regen {
+	if regen, _ := EnsureFeatureLink(moved, "demo"); !regen {
 		t.Error("inconsistent link should regenerate")
 	}
 
 	// A future link version is treated as out of date.
-	raw := "version: 99\nsuper_repo: " + superRepo + "\ndata_dir: " + dataDir + "\nproject: pid\nfeature: voice\n"
-	if err := os.WriteFile(cfg.FeatureLinkPath("voice"), []byte(raw), 0o644); err != nil {
+	raw := "version: 99\nsuper_repo: " + superRepo + "\ndata_dir: " + dataDir + "\nproject: pid\nfeature: demo\n"
+	if err := os.WriteFile(cfg.FeatureLinkPath("demo"), []byte(raw), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if FeatureLinkValid(cfg, "voice") {
+	if FeatureLinkValid(cfg, "demo") {
 		t.Error("a newer-than-current link version should be invalid (triggers regenerate)")
 	}
 }

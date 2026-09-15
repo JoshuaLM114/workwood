@@ -7,21 +7,21 @@ real checkouts you edit code in.
 ## Lifecycle
 
 ```sh
-workwood sf create voice "cross-service voice work"   # shorthand defaults to "v"
-workwood sf create billing --shorthand bs             # override the branch prefix
+workwood sf create demo "sample feature spanning services"   # shorthand defaults to "d"
+workwood sf create another-feature --shorthand af             # override the branch prefix
 
-workwood sf add voice api feature/login   # worktree of api on branch  v/feature/login
-workwood sf add voice web ui              # worktree of web on branch  v/ui
-workwood sf add voice lib hotfix --no-feature-prefix      # raw branch "hotfix"
-workwood sf add voice db pg17 --from chore/pg17           # cut from a specific source
+workwood sf add demo api feature/login   # worktree of api on branch  d/feature/login
+workwood sf add demo web ui              # worktree of web on branch  d/ui
+workwood sf add demo lib hotfix --no-feature-prefix      # raw branch "hotfix"
+workwood sf add demo db upgrade --from chore/upgrade           # cut from a specific source
 
-workwood sf status voice    # branch + dirty state per worktree
+workwood sf status demo    # branch + dirty state per worktree
 workwood sf list            # all features
-workwood sf up voice        # rebuild every worktree from the manifest (idempotent)
-workwood sf remove voice api feature/login [--prune-branch]   # one worktree
-workwood sf down voice      # remove ALL worktrees, keep the manifest
-workwood sf delete voice [--prune-branches]                   # worktrees + manifest
-workwood sf rename voice "Voice work"   # your LOCAL display name; slug/branches unchanged
+workwood sf up demo        # rebuild every worktree from the manifest (idempotent)
+workwood sf remove demo api feature/login [--prune-branch]   # one worktree
+workwood sf down demo      # remove ALL worktrees, keep the manifest
+workwood sf delete demo [--prune-branches]                   # worktrees + manifest
+workwood sf rename demo "Demo work"   # your LOCAL display name; slug/branches unchanged
 ```
 
 - **Branches** are `<shorthand>/<sub>` (shorthand committed in the manifest, default
@@ -91,10 +91,10 @@ the parent project **even with `$WORKWOOD_DATA` unset**, and the `[feature]` arg
 defaults to that feature:
 
 ```sh
-cd "$WORKWOOD_DATA/features/voice/api"
-workwood sf status        # no feature arg → "voice"
+cd "$WORKWOOD_DATA/features/demo/api"
+workwood sf status        # no feature arg → "demo"
 workwood action tmux      # same
-workwood                  # TUI opens straight into voice's Actions panel (esc → menu)
+workwood                  # TUI opens straight into demo's Actions panel (esc → menu)
 ```
 
 The link is written on `sf create`/`sf up` and back-filled by `workwood init`. If

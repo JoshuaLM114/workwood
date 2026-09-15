@@ -56,7 +56,7 @@ A script missing `Run` or `Validate` is shown but **cannot be run** (TUI or CLI)
 # TODO: Alter this behaviour, I am not a fan of needing to pass via a file.
 
 - `WORKWOOD_TARGETS` — path to a `context.yml`: a YAML `key: /abs/path` map of the
-  enabled targets. Parse it with the tiny `key/path` loop above (no `yq`/`jq`).
+  enabled targets. Parse it with the tiny `key/path` loop above.
 - `WORKWOOD_ACTION_DATA` — a private per-feature state **dir** for this action
   (`…/<feature>/.workwood/action-data/<action>/`). workwood creates it empty and
   passes the path; it never reads/writes inside — persist + source your own state

@@ -11,15 +11,16 @@
 #                            new feature branch is cut from)
 #   repos[].url            — the git URL to clone from (required; cloned as-is)
 
+# Replace the placeholder clone URLs with your own repository URLs.
 name: example
 
 repos:
   - name: api
     default_branch: main
-    url: git@github.com:my-org/api.git
+    url: git@example.invalid:team/api.git
   - name: web
     default_branch: main
-    url: git@github.com:my-org/web.git
+    url: git@example.invalid:team/web.git
   - name: shared-lib
     default_branch: master
-    url: git@github.com:another-org/shared-lib.git
+    url: git@example.invalid:team/shared-lib.git

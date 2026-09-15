@@ -22,7 +22,7 @@ Validate() {
 }
 
 # Run: greet every selected target. Each YAML line is "key: path" — a tiny parse
-# is enough (no yq/jq).
+# is enough.
 Run() {
     echo "hello from ${WORKWOOD_FEATURE:-?}"
     while IFS= read -r line; do

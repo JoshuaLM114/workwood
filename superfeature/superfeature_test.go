@@ -56,11 +56,11 @@ func TestResolveBranchWith(t *testing.T) {
 		omit    bool
 		want    string
 	}{
-		{"simple", "voice", "api", false, "voice/api"},
-		{"already-prefixed", "voice", "voice/api", false, "voice/api"},
-		{"slashed-sub", "voice", "fix/login", false, "voice/fix/login"},
-		{"omit-prefix", "voice", "hotfix", true, "hotfix"},
-		{"sub-equals-feature", "voice", "voice", false, "voice"},
+		{"simple", "demo", "api", false, "demo/api"},
+		{"already-prefixed", "demo", "demo/api", false, "demo/api"},
+		{"slashed-sub", "demo", "fix/login", false, "demo/fix/login"},
+		{"omit-prefix", "demo", "hotfix", true, "hotfix"},
+		{"sub-equals-feature", "demo", "demo", false, "demo"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

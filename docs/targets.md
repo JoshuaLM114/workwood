@@ -40,9 +40,9 @@ it into one toggleable **sub-target per service**. Commit it inside the repo:
 
 ```yaml
 # <repo>/.workwood/targets.yml  — serviceName: subpath
-api:     services/api
-billing: services/payments/billing
-manager: manager
+api:    services/api
+web:    services/web
+worker: services/worker
 ```
 
 Relative paths resolve against the repo/worktree root (so the file is portable

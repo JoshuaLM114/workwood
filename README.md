@@ -83,19 +83,21 @@ or per-invocation with `WORKWOOD_NO_UPDATE_CHECK=1`.
 
 ## Quick start
 
+The examples use placeholder names and clone URLs. Replace them with your own.
+
 ```sh
 # Point workwood at a data dir for your personal, per-project state + checkouts.
 export WORKWOOD_DATA=~/workwood-data        # (else init prompts once and saves it)
 
 # 1. Clone the team super-repo and initialise workwood inside it (idempotent).
-git clone git@github.com:my-org/my-super-repo.git ~/work/super
+git clone git@example.invalid:team/super-repo.git ~/work/super
 cd ~/work/super && workwood init            # back-fills the project UUID, writes your state
 
 # 2. Pull the base reference clones.
 workwood repos pull
 
 # 3. Rebuild an existing super-feature's worktrees, or start a new one.
-workwood sf up voice-pipeline               # rebuild a shared feature locally
+workwood sf up demo                         # rebuild a shared feature locally
 workwood sf create my-feature "what it's for"
 workwood sf add my-feature api feature/integrate     # branch my-feature/feature/integrate
 workwood sf add my-feature web ui                    # branch my-feature/ui
@@ -117,8 +119,8 @@ There is no registry — workwood finds the project by **location**:
 2. otherwise, walk up from your cwd to the nearest `workwood.yml`
 
 ```sh
-workwood project                 # show the current project (uuid, names, paths)
-workwood project rename "Pay"    # set YOUR local display name (slug unchanged)
+workwood project                          # show the current project (uuid, names, paths)
+workwood project rename "Workwood demo"    # set YOUR local display name (slug unchanged)
 ```
 
 ## The TUI
@@ -161,20 +163,20 @@ manifest stores both `feature:` and `shorthand:`, anyone seeing a branch like
 `mnsf/api` can open the manifest yml and map it back to the feature.
 
 ```sh
-workwood sf create voice "cross-service voice work"   # shorthand → v
+workwood sf create demo "sample feature spanning services"   # shorthand → d
 workwood sf create my-new-super-feature --shorthand mns
-workwood sf add voice api feature/integrate     # -> branch v/feature/integrate
-workwood sf add voice db schema                 # -> branch v/schema
-workwood sf add voice api web                   # 2nd worktree of api -> dir api--web
-workwood sf add voice lib hotfix --no-feature-prefix   # -> raw branch hotfix
-workwood sf add voice db pg17 --from chore/pg17        # cut from a specific source
+workwood sf add demo api feature/integrate     # -> branch d/feature/integrate
+workwood sf add demo db schema                 # -> branch d/schema
+workwood sf add demo api web                   # 2nd worktree of api -> dir api--web
+workwood sf add demo lib hotfix --no-feature-prefix   # -> raw branch hotfix
+workwood sf add demo db upgrade --from chore/upgrade        # cut from a specific source
 
-workwood sf status voice         # branch + dirty state per worktree
+workwood sf status demo         # branch + dirty state per worktree
 workwood sf list                 # all super-features
-workwood sf up voice             # rebuild every worktree from the manifest
-workwood sf remove voice api feature/integrate [--prune-branch]
-workwood sf down voice           # remove ALL worktrees, keep the manifest
-workwood sf delete voice [--prune-branches]
+workwood sf up demo             # rebuild every worktree from the manifest
+workwood sf remove demo api feature/integrate [--prune-branch]
+workwood sf down demo           # remove ALL worktrees, keep the manifest
+workwood sf delete demo [--prune-branches]
 ```
 
 Two worktrees of the same repo just need different names; the second one's folder
@@ -188,8 +190,8 @@ In the **TUI** editor, **`a`** first asks for the repo and a **Create a new bran
 remote-only branch becomes a local branch **tracking** it — instead of cutting a
 new `<shorthand>/…` branch.
 
-Commit `super-features/voice.yaml` and push it. A teammate then `git pull`s,
-runs `workwood repos pull`, and `workwood sf up voice` rebuilds the exact set.
+Commit `super-features/demo.yaml` and push it. A teammate then `git pull`s,
+runs `workwood repos pull`, and `workwood sf up demo` rebuilds the exact set.
 
 Applying a batch of staged adds/removes **persists the manifest after each one**, so
 an error partway can't leave a worktree on disk that the manifest doesn't record —
@@ -209,10 +211,10 @@ own, **even with `$WORKWOOD_DATA` unset**, and **defaults the feature** from whe
 you are:
 
 ```sh
-cd "$WORKWOOD_DATA/features/voice/api"   # a worktree inside the feature
-workwood action tmux                     # no feature arg — uses "voice"
+cd "$WORKWOOD_DATA/features/demo/api"   # a worktree inside the feature
+workwood action tmux                     # no feature arg — uses "demo"
 workwood targets show                    # same
-workwood                                 # the TUI opens straight into voice's Actions panel
+workwood                                 # the TUI opens straight into demo's Actions panel
 ```
 
 In the TUI, launching from a feature folder jumps into that feature's **Actions
@@ -314,9 +316,9 @@ its `Init` creates).
 
 ```sh
 workwood actions                         # list available (marked) actions
-workwood action helloworld voice         # run against voice's working set
-workwood action tmux voice --targets api-only   # …or against a saved preset
-workwood action hello-world voice --init        # create the files the action needs
+workwood action helloworld demo         # run against demo's working set
+workwood action tmux demo --targets api-only   # …or against a saved preset
+workwood action hello-world demo --init        # create the files the action needs
 ```
 
 In the TUI Actions screen (`o` from a feature) the top panel is an action
@@ -339,7 +341,7 @@ and also execs the action with:
 | `WORKWOOD_LANG` | the active UI language (`en`/`ja`) — localize your own output if you like |
 | `WORKWOOD_VAR_<KEY>` | each entry of the manifest's free-form `vars:` map |
 
-`context.yml` is a plain map — read it without `jq`:
+`context.yml` is a plain map — read it with a shell loop:
 
 ```sh
 while IFS= read -r line; do

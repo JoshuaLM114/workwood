@@ -46,17 +46,17 @@ func TestProjectStateRoundTrip(t *testing.T) {
 func TestLastPresetRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), StateFileName)
 	st, _ := LoadState(path)
-	st.EnsureFeature("u", "voice")
+	st.EnsureFeature("u", "demo")
 	if st.LastPreset("u") != "" {
 		t.Fatal("fresh feature should have no last preset")
 	}
-	st.SetLastPreset("u", "voice")
+	st.SetLastPreset("u", "demo")
 	if err := SaveState(path, st); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := LoadState(path)
-	if got.LastPreset("u") != "voice" {
-		t.Fatalf("last preset = %q, want voice", got.LastPreset("u"))
+	if got.LastPreset("u") != "demo" {
+		t.Fatalf("last preset = %q, want demo", got.LastPreset("u"))
 	}
 }
 

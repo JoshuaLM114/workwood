@@ -13,7 +13,7 @@
 #   $WORKWOOD_DATA/features/<feature>
 #
 # Example:
-#   ./seed-hello-world.sh "$WORKWOOD_DATA/features/voice"
+#   ./seed-hello-world.sh "$WORKWOOD_DATA/features/demo"
 set -euo pipefail
 
 root="${1:?usage: ./seed-hello-world.sh <path-to-super-feature-worktrees>}"

@@ -184,7 +184,7 @@
   "tui.repos.form_name_desc": "main_dir 配下のディレクトリ名 / repo 名",
   "tui.repos.form_branch": "デフォルトブランチ",
   "tui.repos.form_url": "URL",
-  "tui.repos.form_url_desc": "クローン元の git URL（例: git@github.com:you/repo.git）",
+  "tui.repos.form_url_desc": "クローン元の git URL（例: git@example.invalid:team/repo.git）",
   "repos.fetched": "%s を取得しました",
   "repos.cloned": "%s をクローンしました（%s）",
   "tui.repos.col_status": "状態",

@@ -22,14 +22,14 @@ func TestBrokenFeatureLinks(t *testing.T) {
 		StateFile:   filepath.Join(dataDir, config.StateFileName),
 	}
 	st := &models.ProjectState{Project: "pid", Features: map[string]models.FeatureState{}}
-	st.EnsureFeature("u", "voice")
+	st.EnsureFeature("u", "demo")
 	if err := config.SaveState(cfg.StateFile, st); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(cfg.FeatureDir("voice"), 0o755); err != nil {
+	if err := os.MkdirAll(cfg.FeatureDir("demo"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := config.WriteFeatureLink(cfg, "voice"); err != nil {
+	if err := config.WriteFeatureLink(cfg, "demo"); err != nil {
 		t.Fatal(err)
 	}
 	if b := brokenFeatureLinks(cfg); len(b) != 0 {
@@ -37,15 +37,15 @@ func TestBrokenFeatureLinks(t *testing.T) {
 	}
 
 	// Remove the link → flagged broken.
-	if err := os.RemoveAll(filepath.Dir(cfg.FeatureLinkPath("voice"))); err != nil {
+	if err := os.RemoveAll(filepath.Dir(cfg.FeatureLinkPath("demo"))); err != nil {
 		t.Fatal(err)
 	}
-	if b := brokenFeatureLinks(cfg); len(b) != 1 || b[0] != "voice" {
+	if b := brokenFeatureLinks(cfg); len(b) != 1 || b[0] != "demo" {
 		t.Fatalf("missing link should be broken: %v", b)
 	}
 
 	// A feature with no folder on disk is skipped (not broken).
-	config.WriteFeatureLink(cfg, "voice") // restore
+	config.WriteFeatureLink(cfg, "demo") // restore
 	st.EnsureFeature("u2", "unbuilt")
 	if err := config.SaveState(cfg.StateFile, st); err != nil {
 		t.Fatal(err)

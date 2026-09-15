@@ -2,8 +2,8 @@
 # workwood-action: open a shell in a target
 # DEFAULT workwood ACTION — ssh. workwood SOURCES this file and calls Validate or
 # Run. Run picks one of the feature's selected targets and drops into a shell
-# there. Replace the final shell with your real connect command (ssh, kubectl
-# exec, port-forward) keyed off the target's path — workwood only hands you the
+# there. Replace the final shell with your connection command
+# keyed off the target's path — workwood only hands you the
 # paths; what "connect" means is up to you.
 set -euo pipefail
 

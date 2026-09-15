@@ -10,15 +10,15 @@ import (
 
 func TestSaveLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "voice.yaml")
+	path := filepath.Join(dir, "demo.yaml")
 	in := &models.Manifest{
-		Feature:     "voice",
-		Description: "voice pipeline",
+		Feature:     "demo",
+		Description: "sample feature",
 		Created:     "2026-06-15",
-		Vars:        map[string]string{"namespace": "dev-voice"},
+		Vars:        map[string]string{"namespace": "dev-demo"},
 		Worktrees: []models.Worktree{
-			{Repo: "api", Branch: "voice/integrate", Base: "main", Path: "voice/api"},
-			{Repo: "api", Branch: "voice/experiment", Base: "main", Path: "voice/api--experiment"},
+			{Repo: "api", Branch: "demo/integrate", Base: "main", Path: "demo/api"},
+			{Repo: "api", Branch: "demo/experiment", Base: "main", Path: "demo/api--experiment"},
 		},
 	}
 	if err := Save(path, in); err != nil {
@@ -34,17 +34,17 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if out.Feature != in.Feature || out.Description != in.Description || len(out.Worktrees) != 2 {
 		t.Fatalf("round-trip mismatch: %+v", out)
 	}
-	if out.Vars["namespace"] != "dev-voice" {
+	if out.Vars["namespace"] != "dev-demo" {
 		t.Errorf("vars lost in round-trip: %+v", out.Vars)
 	}
-	if idx := out.Find("api", "voice/experiment"); idx != 1 {
+	if idx := out.Find("api", "demo/experiment"); idx != 1 {
 		t.Errorf("Find returned %d, want 1", idx)
 	}
 }
 
 func TestIDProjectRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "voice.yaml")
-	in := &models.Manifest{ID: "feat-uuid", Project: "proj-uuid", Feature: "voice"}
+	path := filepath.Join(t.TempDir(), "demo.yaml")
+	in := &models.Manifest{ID: "feat-uuid", Project: "proj-uuid", Feature: "demo"}
 	if err := Save(path, in); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestDefaultShorthand(t *testing.T) {
 		"my-new-super-feature": "mnsf",
 		"add_login_flow":       "alf",
 		"two words":            "tw",
-		"voice":                "v", // single word → its first letter
+		"demo":                 "d", // single word → its first letter
 		"":                     "",
 	}
 	for in, want := range cases {
@@ -89,16 +89,16 @@ func TestDefaultShorthand(t *testing.T) {
 }
 
 func TestBranchPrefix(t *testing.T) {
-	if got := (&models.Manifest{Feature: "voice", Shorthand: "v"}).BranchPrefix(); got != "v" {
-		t.Errorf("with shorthand: got %q, want v", got)
+	if got := (&models.Manifest{Feature: "demo", Shorthand: "d"}).BranchPrefix(); got != "d" {
+		t.Errorf("with shorthand: got %q, want d", got)
 	}
-	if got := (&models.Manifest{Feature: "voice"}).BranchPrefix(); got != "voice" {
-		t.Errorf("no shorthand: got %q, want voice (fallback to feature)", got)
+	if got := (&models.Manifest{Feature: "demo"}).BranchPrefix(); got != "demo" {
+		t.Errorf("no shorthand: got %q, want demo (fallback to feature)", got)
 	}
 }
 
 func TestNormPathStripsLegacyPrefix(t *testing.T) {
-	if got := NormPath("features/voice/api"); got != "voice/api" {
-		t.Errorf("NormPath = %q, want voice/api", got)
+	if got := NormPath("features/demo/api"); got != "demo/api" {
+		t.Errorf("NormPath = %q, want demo/api", got)
 	}
 }

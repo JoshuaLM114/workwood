@@ -38,7 +38,7 @@ const (
 )
 
 // editorBranchesMsg carries a repo's branches back to the editor after the async
-// fetch kicked off when the user chose "from existing".
+// fetch kicked off when the user chooses a repo and branch mode.
 type editorBranchesMsg struct {
 	repo     string
 	branches []repos.BranchRef
@@ -262,6 +262,13 @@ func (e *EditorModel) Update(msg tea.Msg) (*EditorModel, tea.Cmd) {
 
 	case editorBranchesMsg:
 		e.busy = false
+		if !e.addVals.fromExisting {
+			e.form = newAddForm(e.man.BranchPrefix(), &e.addVals, func(sub string, omit bool) error {
+				return e.validateAdd(superfeature.AddSpec{Repo: e.addVals.repo, Sub: sub, OmitFeaturePrefix: omit})
+			}).WithWidth(min(72, e.width-2))
+			e.formMode = formAdd
+			return e, e.form.Init()
+		}
 		if len(msg.branches) == 0 {
 			e.status = components.WarnStyle.Render(i18n.T("tui.status.no_branches", msg.repo))
 			return e, nil
@@ -374,7 +381,7 @@ func (e *EditorModel) openAddForm() {
 }
 
 // fetchBranchesCmd refreshes a repo's remote refs then lists its branches, so the
-// "from existing" dropdown reflects teammates' pushed branches.
+// existing-branch selection and new-branch validation use refreshed refs.
 func (e *EditorModel) fetchBranchesCmd(repo string) tea.Cmd {
 	base := e.ctx.Cfg.BaseRepo(repo)
 	return func() tea.Msg {
@@ -414,16 +421,10 @@ func (e *EditorModel) applyRename(newName string) {
 func (e *EditorModel) onFormDone() tea.Cmd {
 	switch e.formMode {
 	case formAddMode:
-		if e.addVals.fromExisting {
-			// Phase 2 (existing): fetch the repo's branches, then show the dropdown.
-			e.form = nil
-			e.formMode = formNone
-			return e.enterBusy(i18n.T("tui.status.fetching_branches"), e.fetchBranchesCmd(e.addVals.repo))
-		}
-		// Phase 2 (new): collect the new branch name + placement + source.
-		e.form = newAddForm(e.man.BranchPrefix(), &e.addVals).WithWidth(min(72, e.width-2))
-		e.formMode = formAdd
-		return e.form.Init()
+		// Both modes refresh refs before selecting or validating a branch.
+		e.form = nil
+		e.formMode = formNone
+		return e.enterBusy(i18n.T("tui.status.fetching_branches"), e.fetchBranchesCmd(e.addVals.repo))
 	case formAdd:
 		sub := strings.TrimSpace(e.addVals.sub)
 		e.stageAdd(superfeature.AddSpec{
@@ -433,10 +434,9 @@ func (e *EditorModel) onFormDone() tea.Cmd {
 			OmitFeaturePrefix: e.addVals.omitPrefix,
 		})
 	case formAddExisting:
-		// Check out the chosen branch directly (no <feature>/ prefix) — addWorktree
-		// attaches to the local/remote branch.
+		// The chosen branch is attached directly without a feature prefix.
 		if branch := strings.TrimSpace(e.addVals.branch); branch != "" {
-			e.stageAdd(superfeature.AddSpec{Repo: e.addVals.repo, Sub: branch, OmitFeaturePrefix: true})
+			e.stageAdd(superfeature.AddSpec{Repo: e.addVals.repo, Sub: branch, ExistingBranch: true})
 		}
 	case formMeta:
 		e.desc = e.metaVals.desc
@@ -450,13 +450,31 @@ func (e *EditorModel) onFormDone() tea.Cmd {
 
 // stageAdd appends a staged worktree-add row from a resolved spec.
 func (e *EditorModel) stageAdd(add superfeature.AddSpec) {
+	if err := e.validateAdd(add); err != nil {
+		e.status = components.ErrStyle.Render(err.Error())
+		return
+	}
 	e.rows = append(e.rows, editorRow{
 		kind:      rowStagedAdd,
 		add:       add,
-		addBranch: superfeature.ResolveBranchWith(e.man.BranchPrefix(), add.Sub, add.OmitFeaturePrefix),
+		addBranch: superfeature.ResolveBranchWith(e.man.BranchPrefix(), add.Sub, add.OmitFeaturePrefix || add.ExistingBranch),
 	})
 	e.syncTable()
 	e.status = i18n.T("tui.status.staged_add")
+}
+
+// validateAdd also checks additions queued in this editor but not yet applied.
+func (e *EditorModel) validateAdd(add superfeature.AddSpec) error {
+	if err := superfeature.ValidateAdd(e.ctx.Cfg, e.man, add); err != nil {
+		return err
+	}
+	branch := superfeature.ResolveBranchWith(e.man.BranchPrefix(), add.Sub, add.OmitFeaturePrefix || add.ExistingBranch)
+	for _, row := range e.rows {
+		if row.kind == rowStagedAdd && row.add.Repo == add.Repo && row.addBranch == branch {
+			return i18n.Err("err.worktree_branch_exists", add.Repo, branch)
+		}
+	}
+	return nil
 }
 
 // applyCmd runs the staged delta off the event loop.

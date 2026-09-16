@@ -39,6 +39,7 @@ const (
 	screenSettings
 	screenDelete    // the delete-super-feature walkthrough
 	screenReconcile // the manifest↔disk reconcile walkthrough
+	screenFolderNames
 )
 
 // ---- root model -------------------------------------------------------------
@@ -59,6 +60,7 @@ type Model struct {
 	reconcile *menus.ReconcileModel
 	create    *menus.CreateModel
 	settings  *menus.SettingsModel
+	folders   *menus.FolderNamesModel
 
 	width, height int
 	err           error
@@ -66,6 +68,7 @@ type Model struct {
 	linkNotice    string   // set on boot when feature back-links need repair (or after a fix)
 	brokenLinks   []string // feature slugs whose .workwood/link.yml is missing/stale
 	actionsToMenu bool     // launched into Actions from a feature folder → esc goes to the menu
+	actionsSlug   string
 }
 
 // ctx snapshots the shared, read-only project state for building a screen model.
@@ -129,17 +132,37 @@ func Run(cfg *models.Config, pd *models.ProjectDef) error {
 	m := &Model{cfg: cfg, pd: pd, screen: screenMenu}
 	m.menu = menus.NewMenu(m.ctx(), menus.Notices{})
 	if cfg.ActiveFeature != "" {
-		if am, err := menus.NewActions(m.ctx(), cfg.ActiveFeature); err == nil {
-			m.actions = am
-			m.screen = screenActions
-			m.actionsToMenu = true
-		}
+		m.actionsToMenu = true
 	}
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
 
-func (m *Model) Init() tea.Cmd { return m.bootFetchCmd() }
+func (m *Model) Init() tea.Cmd {
+	if m.cfg.ActiveFeature != "" {
+		return tea.Batch(m.bootFetchCmd(), func() tea.Msg {
+			return menus.OpenActionsMsg{Feature: m.cfg.ActiveFeature}
+		})
+	}
+	return m.bootFetchCmd()
+}
+
+// checkFolderNames gates both editor and Actions entry, including a cwd launch.
+func (m *Model) checkFolderNames(slug string, next tea.Msg) (tea.Cmd, bool) {
+	folders, err := menus.NewFolderNames(m.ctx(), slug, next)
+	if err != nil {
+		m.err = err
+		return nil, true
+	}
+	if folders == nil {
+		return nil, false
+	}
+	m.folders = folders
+	m.editor = nil
+	m.actions = nil
+	m.screen = screenFolderNames
+	return folders.Init(), true
+}
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -157,6 +180,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.repos != nil {
 			m.repos.SetSize(hw, hh)
+		}
+		if m.folders != nil {
+			m.folders.SetSize(hw, hh)
 		}
 		return m, nil
 
@@ -210,6 +236,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.settings.Init()
 
 	case menus.OpenEditorMsg:
+		if cmd, handled := m.checkFolderNames(msg.Feature, msg); handled {
+			return m, cmd
+		}
 		ed, err := menus.NewEditor(m.ctx(), msg.Feature)
 		if err != nil {
 			m.err = err
@@ -221,12 +250,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case menus.OpenActionsMsg:
+		if cmd, handled := m.checkFolderNames(msg.Feature, msg); handled {
+			return m, cmd
+		}
 		am, err := menus.NewActions(m.ctx(), msg.Feature)
 		if err != nil {
 			m.err = err
 			return m, nil
 		}
 		m.actions = am
+		m.actionsSlug = msg.Feature
 		m.actions.SetSize(m.width-4, m.height-4)
 		m.screen = screenActions
 		return m, nil
@@ -256,12 +289,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// repos → menu.
 		switch m.screen {
 		case screenActions:
-			m.actions = nil
 			if m.actionsToMenu {
 				m.actionsToMenu = false
 				m.screen = screenMenu // launched from a feature folder → full menu
 			} else {
+				if m.editor == nil {
+					slug := m.actionsSlug
+					return m, func() tea.Msg { return menus.OpenEditorMsg{Feature: slug} }
+				}
 				m.screen = screenEditor
+			}
+			m.actions = nil
+		case screenFolderNames:
+			m.folders = nil
+			if m.actionsToMenu {
+				m.actionsToMenu = false
+				m.screen = screenMenu
+			} else {
+				m.features = menus.NewFeatures(m.ctx())
+				m.features.SetSize(m.width-4, m.height-4)
+				m.screen = screenFeatures
 			}
 		case screenEditor:
 			m.editor = nil
@@ -278,6 +325,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.screen {
+	case screenFolderNames:
+		var cmd tea.Cmd
+		m.folders, cmd = m.folders.Update(msg)
+		return m, cmd
 	case screenCreate:
 		var cmd tea.Cmd
 		m.create, cmd = m.create.Update(msg)
@@ -337,6 +388,8 @@ func (m *Model) View() string {
 		return components.DocStyle.Render(components.ErrStyle.Render(i18n.T("tui.error", m.err.Error())) + "\n\n" + components.HelpStyle.Render(i18n.T("tui.press_q")))
 	}
 	switch m.screen {
+	case screenFolderNames:
+		return m.folders.View()
 	case screenCreate:
 		return m.create.View()
 	case screenSettings:

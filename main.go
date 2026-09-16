@@ -15,6 +15,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -620,7 +621,10 @@ func runFeature(projectFlag string, args []string) error {
 			from = pos[3]
 		}
 		omit := hasFlag(flags, "no-feature-prefix", "strip-feature")
-		wt, err := superfeature.Add(cfg, pd, pos[0], superfeature.AddSpec{Repo: pos[1], Sub: pos[2], From: from, OmitFeaturePrefix: omit})
+		wt, err := superfeature.Add(cfg, pd, pos[0], superfeature.AddSpec{
+			Repo: pos[1], Sub: pos[2], From: from, OmitFeaturePrefix: omit,
+			ExistingBranch: hasFlag(flags, "existing"),
+		})
 		if err != nil {
 			return err
 		}
@@ -633,7 +637,13 @@ func runFeature(projectFlag string, args []string) error {
 		if err != nil {
 			return err
 		}
-		log, err := superfeature.Up(cfg, feat, confirmNewBranch)
+		sc := bufio.NewScanner(os.Stdin)
+		if err := checkFolderNames(cfg, feat, sc, os.Stdout); err != nil {
+			return err
+		}
+		log, err := superfeature.Up(cfg, feat, func(repo, branch string) bool {
+			return confirmNewBranch(sc, os.Stdout, repo, branch)
+		})
 		if err != nil {
 			return err
 		}
@@ -959,11 +969,10 @@ func firstPos(pos []string) string {
 // confirmNewBranch asks whether to create a new local branch for a worktree whose
 // branch is on neither the local repo nor origin (used by `sf up`). Defaults to
 // yes; a non-interactive stdin (EOF) also yields yes, so scripts aren't blocked.
-func confirmNewBranch(repo, branch string) bool {
-	fmt.Print(i18n.T("sf.up_no_remote", branch, repo))
-	sc := bufio.NewScanner(os.Stdin)
+func confirmNewBranch(sc *bufio.Scanner, out io.Writer, repo, branch string) bool {
+	fmt.Fprint(out, i18n.T("sf.up_no_remote", branch, repo))
 	if !sc.Scan() {
-		fmt.Println()
+		fmt.Fprintln(out)
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(sc.Text())) {
@@ -972,6 +981,48 @@ func confirmNewBranch(repo, branch string) bool {
 	default:
 		return false
 	}
+}
+
+// checkFolderNames collects every choice before applying any rename or drop.
+// EOF and cancellation leave the manifest and all checkouts unchanged.
+func checkFolderNames(cfg *models.Config, name string, sc *bufio.Scanner, out io.Writer) error {
+	changes, err := superfeature.CheckFolderNames(cfg, name)
+	if err != nil {
+		return err
+	}
+	var decisions []superfeature.FolderDecision
+	for _, change := range changes {
+		fmt.Fprintln(out, i18n.T("folders.paths", change.Worktree.Path, change.Path))
+		if change.Missing {
+			fmt.Fprintln(out, i18n.T("folders.missing"))
+		}
+		for {
+			fmt.Fprint(out, i18n.T("folders.cli_prompt", change.Worktree.Repo, change.Worktree.Branch))
+			if !sc.Scan() {
+				fmt.Fprintln(out)
+				if err := sc.Err(); err != nil {
+					return err
+				}
+				return i18n.Err("err.folder_cancelled")
+			}
+			answer := strings.ToLower(strings.TrimSpace(sc.Text()))
+			switch answer {
+			case "", "y", "yes", "n", "no":
+				decisions = append(decisions, superfeature.FolderDecision{FolderChange: change, Rename: answer != "n" && answer != "no"})
+			case "c", "cancel", "q":
+				return i18n.Err("err.folder_cancelled")
+			default:
+				fmt.Fprintln(out, i18n.T("folders.cli_choices"))
+				continue
+			}
+			break
+		}
+	}
+	log, err := superfeature.ApplyFolderNames(cfg, name, decisions)
+	for _, line := range log {
+		fmt.Fprintln(out, line)
+	}
+	return err
 }
 
 // prompt asks for a value on stdin, returning def if the line is empty.

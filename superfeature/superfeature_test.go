@@ -253,8 +253,8 @@ func TestCreateUsesShorthandForBranch(t *testing.T) {
 }
 
 // TestAddExistingRemoteBranch is the core of the "from existing" add: adding a
-// worktree whose branch already exists on origin (Sub = the raw branch,
-// OmitFeaturePrefix) must check it out as a LOCAL branch TRACKING origin — not cut
+// worktree whose branch already exists on origin (ExistingBranch with the raw
+// Sub) must check it out as a LOCAL branch TRACKING origin — not cut
 // a new <feature>/<sub> branch.
 func TestAddExistingRemoteBranch(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
@@ -294,7 +294,7 @@ func TestAddExistingRemoteBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wt, err := Add(cfg, pd, "demo", AddSpec{Repo: "svc", Sub: "feat/exists", OmitFeaturePrefix: true})
+	wt, err := Add(cfg, pd, "demo", AddSpec{Repo: "svc", Sub: "feat/exists", ExistingBranch: true})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -344,8 +344,8 @@ func TestUpLinksRemoteBranch(t *testing.T) {
 		ManifestsDir: filepath.Join(root, "manifests"),
 	}
 	m := &models.Manifest{ID: "u", Feature: "demo", Worktrees: []models.Worktree{
-		{Repo: "svc", Branch: "feat/exists", Base: "main", Path: "demo/svc-exists"},
-		{Repo: "svc", Branch: "feat/new", Base: "main", Path: "demo/svc-new"},
+		{Repo: "svc", Branch: "feat/exists", Base: "main", Path: "demo/svc--feat_exists"},
+		{Repo: "svc", Branch: "feat/new", Base: "main", Path: "demo/svc--feat_new"},
 	}}
 	if err := manifest.Save(cfg.ManifestPath("demo"), m); err != nil {
 		t.Fatal(err)
@@ -356,7 +356,7 @@ func TestUpLinksRemoteBranch(t *testing.T) {
 	}
 
 	// The branch that exists on origin → the worktree tracks origin/feat/exists.
-	wtExists := cfg.Abs("demo/svc-exists")
+	wtExists := cfg.Abs("demo/svc--feat_exists")
 	if got := gitOut(t, wtExists, "rev-parse", "--abbrev-ref", "HEAD"); got != "feat/exists" {
 		t.Errorf("svc-exists on branch %q, want feat/exists", got)
 	}
@@ -365,7 +365,7 @@ func TestUpLinksRemoteBranch(t *testing.T) {
 	}
 
 	// The branch that doesn't exist on origin → a fresh local branch, no upstream.
-	wtNew := cfg.Abs("demo/svc-new")
+	wtNew := cfg.Abs("demo/svc--feat_new")
 	if got := gitOut(t, wtNew, "rev-parse", "--abbrev-ref", "HEAD"); got != "feat/new" {
 		t.Errorf("svc-new on branch %q, want feat/new", got)
 	}
@@ -399,7 +399,7 @@ func TestUpSkipsNewBranchWhenDeclined(t *testing.T) {
 		ManifestsDir: filepath.Join(root, "manifests"),
 	}
 	m := &models.Manifest{ID: "u", Feature: "demo", Worktrees: []models.Worktree{
-		{Repo: "svc", Branch: "feat/new", Base: "main", Path: "demo/svc-new"},
+		{Repo: "svc", Branch: "feat/new", Base: "main", Path: "demo/svc--feat_new"},
 	}}
 	if err := manifest.Save(cfg.ManifestPath("demo"), m); err != nil {
 		t.Fatal(err)
@@ -412,7 +412,7 @@ func TestUpSkipsNewBranchWhenDeclined(t *testing.T) {
 	if !asked {
 		t.Error("onNew should have been asked for a branch with no remote")
 	}
-	if _, err := os.Stat(cfg.Abs("demo/svc-new")); !os.IsNotExist(err) {
+	if _, err := os.Stat(cfg.Abs("demo/svc--feat_new")); !os.IsNotExist(err) {
 		t.Error("a declined worktree should not have been created")
 	}
 }
@@ -445,8 +445,8 @@ func TestDeleteWalk(t *testing.T) {
 		StateFile:    filepath.Join(root, "state.yml"),
 	}
 	m := &models.Manifest{ID: "d", Feature: "demo", Worktrees: []models.Worktree{
-		{Repo: "svc", Branch: "demo/a", Base: "main", Path: "demo/svc-a"},
-		{Repo: "svc", Branch: "demo/b", Base: "main", Path: "demo/svc-b"},
+		{Repo: "svc", Branch: "demo/a", Base: "main", Path: "demo/svc--a"},
+		{Repo: "svc", Branch: "demo/b", Base: "main", Path: "demo/svc--b"},
 	}}
 	if err := manifest.Save(cfg.ManifestPath("demo"), m); err != nil {
 		t.Fatal(err)
@@ -455,14 +455,14 @@ func TestDeleteWalk(t *testing.T) {
 		t.Fatalf("Up: %v", err)
 	}
 
-	aPath, bPath := cfg.Abs("demo/svc-a"), cfg.Abs("demo/svc-b")
+	aPath, bPath := cfg.Abs("demo/svc--a"), cfg.Abs("demo/svc--b")
 	if _, err := os.Stat(aPath); err != nil {
 		t.Fatalf("svc-a not built: %v", err)
 	}
 
 	plan := []RepoTeardown{
-		{Repo: "svc", Branch: "demo/a", Path: "demo/svc-a", RemoveWorktree: true, DeleteBranch: true},
-		{Repo: "svc", Branch: "demo/b", Path: "demo/svc-b", RemoveWorktree: false, DeleteFiles: false, DeleteBranch: false},
+		{Repo: "svc", Branch: "demo/a", Path: "demo/svc--a", RemoveWorktree: true, DeleteBranch: true},
+		{Repo: "svc", Branch: "demo/b", Path: "demo/svc--b", RemoveWorktree: false, DeleteFiles: false, DeleteBranch: false},
 	}
 	if _, err := DeleteWalk(cfg, "demo", plan); err != nil {
 		t.Fatalf("DeleteWalk: %v", err)

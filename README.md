@@ -175,12 +175,29 @@ workwood sf status demo         # branch + dirty state per worktree
 workwood sf list                 # all super-features
 workwood sf up demo             # rebuild every worktree from the manifest
 workwood sf remove demo api feature/integrate [--prune-branch]
-workwood sf down demo           # remove ALL worktrees, keep the manifest
+workwood sf down demo           # remove recorded worktrees, keep the manifest
 workwood sf delete demo [--prune-branches]
 ```
 
-Two worktrees of the same repo just need different names; the second one's folder
-gets a `--<slug>` suffix so the checkouts don't collide. The one hard git rule is
+Every new worktree folder is `<repo>--<branch-slug>`: branch `d/feature/integrate`
+in repo `api` becomes `api--feature_integrate`. The feature prefix is omitted;
+remaining slashes become underscores. Multiple branches of the same repo get
+separate folders from the first worktree onward. If a name is already occupied
+on disk or reserved in the manifest, a numeric suffix (`--2`, `--3`, …) is added.
+Opening a feature in the TUI or running `sf up` reviews existing folders that do
+not follow this naming rule. Choose **Rename** to move the checkout and update
+saved target paths, or **Remove manifest entry** to keep the checkout and branch
+outside the super-feature. All choices apply after the last prompt; cancellation
+or EOF during this review leaves everything unchanged. Valid numeric suffixes
+stay as they are. See [folder-name review](docs/super-features.md#updating-old-folder-names)
+for missing checkouts, Git move restrictions, and recovery behavior.
+
+Creating a new branch rejects names already present locally or on `origin`, or
+already recorded/staged for that repo. Remote refs are refreshed before creation;
+when offline, validation uses the last fetched refs. Use **From an existing branch**
+in the TUI, or `workwood sf add demo api existing-branch --existing`, to explicitly
+attach an existing branch. `--existing` uses the exact branch name without a feature
+prefix and fails if it does not exist. The one hard git rule is
 that a ref `x` can't coexist with `x/y` — `add` guards that and asks for a
 non-nesting name.
 
@@ -211,7 +228,7 @@ own, **even with `$WORKWOOD_DATA` unset**, and **defaults the feature** from whe
 you are:
 
 ```sh
-cd "$WORKWOOD_DATA/features/demo/api"   # a worktree inside the feature
+cd "$WORKWOOD_DATA/features/demo/api--feature_integrate"   # a worktree inside the feature
 workwood action tmux                     # no feature arg — uses "demo"
 workwood targets show                    # same
 workwood                                 # the TUI opens straight into demo's Actions panel
@@ -365,12 +382,12 @@ scripts, no tool-imposed semantics.
 | `workwood repos list` | list base repos + whether they're cloned |
 | `workwood sf create <name> [desc]` | create a super-feature manifest (mints its UUID) |
 | `workwood sf rename <slug> <name>` | set a super-feature's local display name (slug unchanged) |
-| `workwood sf add <name> <repo> <wt-branch> [--from <src>] [--no-feature-prefix]` | add a worktree on `<name>/<wt-branch>` |
-| `workwood sf up <name>` | rebuild all worktrees from the manifest |
+| `workwood sf add <name> <repo> <wt-branch> [--from <src>] [--no-feature-prefix] [--existing]` | add a worktree on a new branch, or attach an existing branch explicitly |
+| `workwood sf up <name>` | review folder names, then rebuild recorded worktrees |
 | `workwood sf status <name>` | branch + dirty state per worktree |
 | `workwood sf list` | list all super-features |
 | `workwood sf remove <name> <repo> [wt-branch] [--prune-branch]` | remove ONE worktree (+ optionally its branch) |
-| `workwood sf down <name>` | remove ALL worktrees, keep the manifest |
+| `workwood sf down <name>` | remove recorded worktrees, keep the manifest |
 | `workwood sf delete <name> [--prune-branches]` | remove worktrees + manifest (+ branches) |
 | `workwood sf relink [feature]` | validate a feature folder's back-link + regenerate it if missing/stale (all features if omitted) |
 | `workwood sf doctor [feature] [--adopt\|--remove-orphans] [--rebuild\|--drop]` | report + resolve manifest↔disk drift (orphan / missing worktrees); per-item prompts without flags |
@@ -440,9 +457,11 @@ content are not translated.
 - A new branch's source defaults to its repo's `default_branch` from
   `workwood.yml`; override with `--from <source>`. New branches are created
   `--no-track`, so the source is a starting point, not an upstream.
-- `add` / `up` attach to an existing branch (local or `origin/*`) if one matches,
-  otherwise create a new branch from the source — so teammates' pushed branches
-  are picked up automatically.
+- `add` creates a new branch and rejects existing names. `add --existing` attaches
+  an existing local or `origin` branch. `up` reviews outdated folder names before
+  rebuilding recorded worktrees and attaches existing branches automatically.
+- `down` and `delete` preserve unrecorded files and checkouts, including worktrees
+  whose manifest entries were removed during folder-name review.
 - Manifests, `workwood-state.yml`, and `~/.workwood/config.yaml` carry a
   `version:` schema number. A file written by a **newer** workwood than your build
   is refused with an upgrade message rather than misread; legacy files without it

@@ -11,6 +11,7 @@ import (
 	"github.com/JoshuaLM114/workwood/manifest"
 	"github.com/JoshuaLM114/workwood/models"
 	"github.com/JoshuaLM114/workwood/repos"
+	"github.com/JoshuaLM114/workwood/superfeature"
 )
 
 // required rejects blank input.
@@ -119,9 +120,9 @@ func newAddModeForm(repos []string, v *addVals) *huh.Form {
 }
 
 // newAddForm is phase 2 for a NEW branch: its name, placement, and source ref.
-// feature is the super-feature slug, used to preview the exact branch each
+// feature is the branch prefix, used to preview the exact branch each
 // placement choice produces.
-func newAddForm(feature string, v *addVals) *huh.Form {
+func newAddForm(feature string, v *addVals, validate func(string, bool) error) *huh.Form {
 	return form(
 		huh.NewGroup(
 			huh.NewInput().
@@ -144,11 +145,12 @@ func newAddForm(feature string, v *addVals) *huh.Form {
 						name = i18n.T("tui.form.name_ph")
 					}
 					return []huh.Option[bool]{
-						huh.NewOption(i18n.T("tui.form.placement_nested", feature+"/"+name), false),
+						huh.NewOption(i18n.T("tui.form.placement_nested", superfeature.ResolveBranch(feature, name)), false),
 						huh.NewOption(i18n.T("tui.form.placement_standalone", name), true),
 					}
 				}, &v.sub).
-				Value(&v.omitPrefix),
+				Value(&v.omitPrefix).
+				Validate(func(omit bool) error { return validate(strings.TrimSpace(v.sub), omit) }),
 			huh.NewInput().
 				Key("from").
 				Title(i18n.T("tui.form.source")).

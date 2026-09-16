@@ -10,6 +10,7 @@ package superfeature
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -230,6 +231,40 @@ type AddSpec struct {
 	// OmitFeaturePrefix drops the <feature>/ prefix, yielding the raw <sub> as
 	// the branch instead of <feature>/<sub>.
 	OmitFeaturePrefix bool
+	ExistingBranch    bool // attach to Sub verbatim; the branch must already exist
+}
+
+// ValidateAdd checks a proposed addition against the manifest and current refs.
+// Callers refresh remote refs before validation when network access is available.
+func ValidateAdd(cfg *models.Config, m *models.Manifest, spec AddSpec) error {
+	if err := validName(m.Feature); err != nil {
+		return err
+	}
+	if err := validName(spec.Repo); err != nil {
+		return err
+	}
+	baseRepo := cfg.BaseRepo(spec.Repo)
+	if !gitx.IsRepo(baseRepo) {
+		return i18n.Err("err.base_repo_missing", baseRepo)
+	}
+	branch := ResolveBranchWith(m.BranchPrefix(), spec.Sub, spec.OmitFeaturePrefix || spec.ExistingBranch)
+	if strings.TrimSpace(spec.Sub) == "" || !gitx.ValidBranchName(baseRepo, branch) {
+		return i18n.Err("err.invalid_branch", branch)
+	}
+	if m.Find(spec.Repo, branch) >= 0 {
+		return i18n.Err("err.worktree_branch_exists", spec.Repo, branch)
+	}
+	exists := gitx.HasLocalBranch(baseRepo, branch) || gitx.HasRemoteBranch(baseRepo, branch)
+	if spec.ExistingBranch {
+		if !exists {
+			return i18n.Err("err.branch_missing", branch, spec.Repo)
+		}
+		return nil
+	}
+	if exists {
+		return i18n.Err("err.branch_exists", branch, spec.Repo)
+	}
+	return checkRefHierarchy(baseRepo, branch)
 }
 
 // Add provisions one worktree for an existing feature and records it in the
@@ -255,14 +290,13 @@ func Add(cfg *models.Config, pd *models.ProjectDef, name string, spec AddSpec) (
 }
 
 // provision creates the actual worktree (without saving the manifest) and
-// returns the entry to record. It carries every guard: branch prefixing, the
-// ref-hierarchy guard, attach-to-existing precedence, and directory-collision
-// suffixing.
+// returns the entry to record. It validates the requested branch mode after
+// fetching and allocates an unused repo-and-branch directory.
 func provision(cfg *models.Config, pd *models.ProjectDef, m *models.Manifest, spec AddSpec) (models.Worktree, error) {
 	if err := validName(spec.Repo); err != nil {
 		return models.Worktree{}, err
 	}
-	branch := ResolveBranchWith(m.BranchPrefix(), spec.Sub, spec.OmitFeaturePrefix)
+	branch := ResolveBranchWith(m.BranchPrefix(), spec.Sub, spec.OmitFeaturePrefix || spec.ExistingBranch)
 	baseRepo := cfg.BaseRepo(spec.Repo)
 	if !gitx.IsRepo(baseRepo) {
 		return models.Worktree{}, i18n.Err("err.base_repo_missing", baseRepo)
@@ -278,16 +312,30 @@ func provision(cfg *models.Config, pd *models.ProjectDef, m *models.Manifest, sp
 		base = "HEAD"
 	}
 
-	// Refresh remote refs so we attach to a teammate's pushed branch / fresh base.
+	// Refresh remote refs before checking names and resolving the source.
 	gitx.Fetch(baseRepo)
 
-	if err := checkRefHierarchy(baseRepo, branch); err != nil {
+	if err := ValidateAdd(cfg, m, spec); err != nil {
 		return models.Worktree{}, err
 	}
 
 	rel := allocPath(cfg, m, spec.Repo, branch)
 	abs := cfg.Abs(rel)
-	if err := addWorktree(baseRepo, branch, base, abs); err != nil {
+	var err error
+	if spec.ExistingBranch {
+		if gitx.HasLocalBranch(baseRepo, branch) {
+			err = gitx.AddWorktreeExistingLocal(baseRepo, abs, branch)
+		} else {
+			err = gitx.AddWorktreeTrackRemote(baseRepo, abs, branch)
+		}
+	} else {
+		baseref := base
+		if gitx.HasRemoteBranch(baseRepo, base) {
+			baseref = "origin/" + base
+		}
+		err = gitx.AddWorktreeNewBranch(baseRepo, abs, branch, baseref)
+	}
+	if err != nil {
 		return models.Worktree{}, err
 	}
 	return models.Worktree{Repo: spec.Repo, Branch: branch, Base: base, Path: rel}, nil
@@ -335,23 +383,29 @@ func checkRefHierarchy(baseRepo, branch string) error {
 }
 
 // allocPath chooses the features_dir-relative worktree dir for a new entry:
-// <feature>/<repo>, or suffixed with the branch slug when that dir is already
-// taken (a 2nd branch of the same repo).
+// <feature>/<repo>--<branch-slug>, omitting the feature prefix from the branch.
+// Occupied paths receive a numeric suffix.
 func allocPath(cfg *models.Config, m *models.Manifest, repo, branch string) string {
-	dir := repo
-	if dirTaken(cfg, m, m.Feature+"/"+dir) {
-		// On a 2nd worktree of the same repo, suffix the dir with the branch's
-		// sub-name (the part after the branch prefix) so the folders stay distinct.
-		sub := strings.TrimPrefix(branch, m.BranchPrefix()+"/")
-		dir = repo + "--" + slugify(sub)
+	base := worktreePath(m, repo, branch)
+	rel := base
+	for n := 2; dirTaken(cfg, m, rel); n++ {
+		rel = fmt.Sprintf("%s--%d", base, n)
 	}
-	return m.Feature + "/" + dir
+	return rel
+}
+
+func worktreePath(m *models.Manifest, repo, branch string) string {
+	suffix := slugify(strings.TrimPrefix(branch, m.BranchPrefix()+"/"))
+	if suffix == "" {
+		suffix = "branch"
+	}
+	return m.Feature + "/" + repo + "--" + suffix
 }
 
 // dirTaken reports whether a features_dir-relative path is already used, either
 // on disk or by an entry already in the manifest.
 func dirTaken(cfg *models.Config, m *models.Manifest, rel string) bool {
-	if _, err := os.Stat(cfg.Abs(rel)); err == nil {
+	if _, err := os.Lstat(cfg.Abs(rel)); err == nil {
 		return true
 	}
 	for _, w := range m.Worktrees {
@@ -379,12 +433,20 @@ func slugify(s string) string {
 
 // Up rebuilds every worktree a manifest records (idempotent) — how a fresh
 // checkout reconstructs the exact feature set after `repos pull`.
+// Outdated folder names require review through CheckFolderNames/ApplyFolderNames.
 //
 // For a worktree whose branch exists on NEITHER the local repo nor origin (after
 // fetching), rebuilding would invent a brand-new local branch. onNew, if non-nil,
 // is asked first — return false to skip that worktree instead of creating it. A
 // nil onNew creates them without asking (the non-interactive default).
 func Up(cfg *models.Config, name string, onNew func(repo, branch string) bool) ([]string, error) {
+	changes, err := CheckFolderNames(cfg, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(changes) > 0 {
+		return nil, i18n.Err("err.folder_names_required", name)
+	}
 	path := cfg.ManifestPath(name)
 	m, err := manifest.Load(path)
 	if err != nil {
@@ -427,8 +489,8 @@ func Up(cfg *models.Config, name string, onNew func(repo, branch string) bool) (
 	return log, nil
 }
 
-// Down detaches every worktree (branches kept) and drops the feature dir. The
-// manifest is kept so it can be rebuilt.
+// Down detaches recorded worktrees (branches kept). Unrecorded checkouts and
+// files survive; an otherwise empty feature dir is removed with its local data.
 func Down(cfg *models.Config, name string) ([]string, error) {
 	if err := validName(name); err != nil {
 		return nil, err
@@ -443,7 +505,18 @@ func Down(cfg *models.Config, name string) ([]string, error) {
 		removeWorktreeDir(cfg, w.Repo, w.Path)
 		log = append(log, i18n.T("log.down", w.Path))
 	}
-	_ = safeRemoveAll(cfg, cfg.FeatureDir(name))
+	entries, err := os.ReadDir(cfg.FeatureDir(name))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return log, err
+	}
+	for _, entry := range entries {
+		if entry.Name() != models.RepoWorkwoodDirName {
+			return append(log, i18n.T("log.kept_unrecorded", cfg.FeatureDir(name))), nil
+		}
+	}
+	if err := safeRemoveAll(cfg, cfg.FeatureDir(name)); err != nil {
+		return log, err
+	}
 	return log, nil
 }
 
@@ -537,8 +610,8 @@ func RemoveBranchEntry(cfg *models.Config, m *models.Manifest, w models.Worktree
 	return nil
 }
 
-// Delete tears down all worktrees, optionally prunes the branches, and removes
-// the manifest.
+// Delete tears down recorded worktrees, optionally prunes their branches, and
+// removes the manifest. Unrecorded checkouts remain on disk.
 func Delete(cfg *models.Config, name string, pruneBranches bool) error {
 	if err := validName(name); err != nil {
 		return err

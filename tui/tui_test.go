@@ -6,8 +6,10 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stretchr/testify/require"
 
 	"github.com/JoshuaLM114/workwood/config"
+	"github.com/JoshuaLM114/workwood/manifest"
 	"github.com/JoshuaLM114/workwood/models"
 	"github.com/JoshuaLM114/workwood/tui/menus"
 )
@@ -84,4 +86,37 @@ func TestMenuNavNoPanic(t *testing.T) {
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
 	m.Update(tea.KeyMsg{Type: tea.KeyUp})
+}
+
+func TestOpeningFeatureReviewsOldFolderNames(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		msg  tea.Msg
+	}{
+		{"editor", menus.OpenEditorMsg{Feature: "demo"}},
+		{"actions", menus.OpenActionsMsg{Feature: "demo"}},
+		{"cwd-launch", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMenuModel()
+			m.pd = &models.ProjectDef{}
+			m.cfg.ManifestsDir, m.cfg.FeaturesDir = t.TempDir(), t.TempDir()
+			require.NoError(t, manifest.Save(m.cfg.ManifestPath("demo"), &models.Manifest{
+				Feature: "demo", Worktrees: []models.Worktree{{Repo: "api", Branch: "demo/topic", Path: "demo/api"}},
+			}))
+			msg := tc.msg
+			if tc.name == "cwd-launch" {
+				m.cfg.ActiveFeature = "demo"
+				batch := m.Init()().(tea.BatchMsg)
+				msg = batch[1]()
+			}
+			_, cmd := m.Update(msg)
+			require.NotNil(t, cmd)
+			require.NoError(t, m.err)
+			require.Equal(t, screenFolderNames, m.screen)
+			require.NotNil(t, m.folders)
+			require.Nil(t, m.editor)
+			require.Nil(t, m.actions)
+		})
+	}
 }

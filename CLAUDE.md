@@ -8,8 +8,8 @@ It's the index: skim it, then open the one `docs/` file for the task at hand.
 
 It orchestrates **git worktrees across several repos at once** as named
 **super-features**, and runs **actions** (scripts) against a chosen set of
-**targets** (paths). One feature = a coordinated branch + worktree in each repo it
-touches.
+**targets** (paths). One feature = a coordinated set of branches and worktrees across its repos;
+a repo can have several worktrees on different branches.
 
 Mental model (memorize this):
 
@@ -19,9 +19,13 @@ Mental model (memorize this):
   (one committed manifest per feature). All committed + team-shared.
 - **base repos** — reference clones at `$WORKWOOD_DATA/main/<repo>`. Read-only
   scaffolding; never edit these. `workwood repos pull` creates/refreshes them.
-- **super-feature** — a named set of worktrees (one per repo it spans), recorded
+- **super-feature** — a named set of worktrees (one or more per repo), recorded
   in a manifest. Worktrees are **real checkouts** at
-  `$WORKWOOD_DATA/features/<slug>/<repo>` — **this is where you edit code.**
+  `$WORKWOOD_DATA/features/<slug>/<repo>--<branch-slug>` — **this is where you edit code.**
+  New folder names omit the feature branch prefix and flatten slashes to underscores;
+  occupied names gain a numeric suffix. Opening a feature in the TUI or running
+  `sf up` reviews old names: rename, or drop the manifest entry while keeping the
+  checkout and branch. Cancelling leaves everything unchanged.
 - **branches** — `<shorthand>/<sub>`, where the shorthand defaults to the feature
   name's initials (`my-feature` → `mf`) and is committed in the manifest.
 - **targets / working set** — a per-feature `key → /abs/path` map (the base repos +
@@ -50,7 +54,7 @@ Mental model (memorize this):
 workwood init [path]                         scaffold/sync a super-repo
 workwood repos pull | list                   clone/refresh base repos
 workwood sf create <name> [desc] [--shorthand s]
-workwood sf add <name> <repo> <wt-branch> [--from <src>] [--no-feature-prefix]
+workwood sf add <name> <repo> <wt-branch> [--from <src>] [--no-feature-prefix] [--existing]
 workwood sf up | status | down | delete | relink | doctor [feature]   (feature defaults to cwd)
 workwood sf rename <slug> <new-name>         local display name only
 workwood action <name> [feature] [--targets <preset|file>] [--init]
@@ -58,6 +62,10 @@ workwood actions                             list discovered actions
 workwood targets list | show [feature] | generate [feature]
 workwood project [info] | rename <name>      ·   workwood lang [en|ja]   ·   workwood version
 ```
+
+New branch names must not already exist locally or on origin, or be recorded/staged
+for that repo in the feature. Use `--existing` (CLI) or **From existing** (TUI) to
+attach an existing branch explicitly.
 
 ## Hard rules (not preferences)
 

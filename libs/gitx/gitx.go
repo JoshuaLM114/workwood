@@ -57,6 +57,12 @@ func HasRemoteBranch(repo, branch string) bool {
 	return quiet(repo, "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+branch)
 }
 
+// ValidBranchName checks a literal branch name without expanding checkout aliases.
+func ValidBranchName(repo, branch string) bool {
+	return branch != "HEAD" && !strings.HasPrefix(branch, "-") &&
+		quiet(repo, "check-ref-format", "refs/heads/"+branch)
+}
+
 // CurrentBranch returns the short name of the branch checked out at dir (e.g.
 // "main"). Returns "HEAD" for a detached head; errors when dir isn't a git repo.
 func CurrentBranch(dir string) (string, error) {
@@ -138,6 +144,17 @@ func LsRemoteHeads(url string) ([]string, error) {
 // AddWorktreeExistingLocal checks out an existing local branch into abs.
 func AddWorktreeExistingLocal(repo, abs, branch string) error {
 	return run(repo, "worktree", "add", abs, branch)
+}
+
+// MoveWorktree moves a linked checkout and updates Git's worktree registration.
+// Locked worktrees and worktrees with submodules retain Git's normal protections.
+func MoveWorktree(repo, from, to string) error {
+	if _, err := os.Lstat(to); err == nil {
+		return fmt.Errorf("worktree destination %q already exists", to)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return run(repo, "worktree", "move", from, to)
 }
 
 // AddWorktreeTrackRemote creates a local branch tracking origin/<branch> in abs.

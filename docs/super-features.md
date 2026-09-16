@@ -13,22 +13,32 @@ workwood sf create another-feature --shorthand af             # override the bra
 workwood sf add demo api feature/login   # worktree of api on branch  d/feature/login
 workwood sf add demo web ui              # worktree of web on branch  d/ui
 workwood sf add demo lib hotfix --no-feature-prefix      # raw branch "hotfix"
+workwood sf add demo api existing-branch --existing      # attach the exact branch
 workwood sf add demo db upgrade --from chore/upgrade           # cut from a specific source
 
 workwood sf status demo    # branch + dirty state per worktree
 workwood sf list            # all features
 workwood sf up demo        # rebuild every worktree from the manifest (idempotent)
 workwood sf remove demo api feature/login [--prune-branch]   # one worktree
-workwood sf down demo      # remove ALL worktrees, keep the manifest
+workwood sf down demo      # remove recorded worktrees, keep the manifest
 workwood sf delete demo [--prune-branches]                   # worktrees + manifest
 workwood sf rename demo "Demo work"   # your LOCAL display name; slug/branches unchanged
 ```
 
 - **Branches** are `<shorthand>/<sub>` (shorthand committed in the manifest, default
   = initials of the name). The `<repo>` arg only says which base clone to cut from.
-- Worktrees land at `$WORKWOOD_DATA/features/<slug>/<repo>` (a 2nd worktree of the
-  same repo gets a `--<sub>` dir suffix). A ref `x` can't coexist with `x/y` — `add`
-  guards that.
+- New worktrees land at `$WORKWOOD_DATA/features/<slug>/<repo>--<branch-slug>`.
+  The feature prefix is omitted from the branch suffix; slashes become underscores.
+  For example, repo `api` on `d/feature/login` uses `api--feature_login`. Multiple
+  branches of the same repo each get their own folder. Occupied or manifest-reserved
+  names gain `--2`, `--3`, and so on. Existing numeric suffixes remain valid.
+  Older names are reviewed when opening a feature in the TUI or running `sf up`.
+- New branch names must be valid Git branch names and absent from local/origin
+  refs and the feature's recorded or staged worktrees for that repo. Branch refs
+  are refreshed before creation; offline checks use the last fetched refs. A ref
+  `x` cannot coexist with `x/y` — `add` also guards that.
+- `sf add ... --existing` explicitly attaches the supplied branch verbatim. It
+  requires an existing local or origin branch; it never invents a missing branch.
 - In the **TUI** editor, **`a`** (add a worktree) first asks for the repo and a
   **Create a new branch / From an existing branch** choice. *New* then collects the
   branch name, placement, and source (the CLI's `<sub>` / `--no-feature-prefix` /
@@ -40,8 +50,38 @@ workwood sf rename demo "Demo work"   # your LOCAL display name; slug/branches u
 - **`sf up`** is how a teammate reconstructs your feature: `git pull` the super-repo,
   `workwood repos pull`, `workwood sf up <feature>`. For a worktree whose branch
   exists on origin it creates a tracking branch; if the branch is on neither local
-  nor origin it **prompts before inventing a new local branch** (yes on EOF, so
-  scripts aren't blocked).
+  nor origin it **prompts before inventing a new local branch** (yes on EOF).
+  The separate folder-name review requires a response when old names are found.
+
+## Updating old folder names
+
+Opening a super-feature in the TUI (Editor or Actions, including a launch from
+inside the feature) and CLI `sf up` check every recorded folder name. An old name
+such as `api` for branch `sf/fix-login` proposes `api--fix-login`. Each entry offers:
+
+- **Rename**: move the checkout and update its manifest path. Saved working sets
+  and target presets follow the move, including service paths inside the checkout.
+  Git's index, uncommitted changes, and branch are preserved. If the checkout is
+  absent, only its recorded path changes; `sf up` then rebuilds it there.
+- **Remove manifest entry**: exclude it from the super-feature, keeping the checkout
+  and branch. Independently configured action targets and presets stay intact.
+  The retained checkout can appear as an orphan in `sf doctor`; adopting it again
+  brings it back into the feature and subjects its name to the same review.
+
+The CLI accepts `y`/Enter to rename, `n` to remove the manifest entry, or `cancel`
+to stop. TUI Escape, CLI cancellation, and EOF during folder review leave all
+entries unchanged, even after earlier choices. All choices are collected before
+applying them. With no old names, `sf up` needs no folder-review input.
+
+Moves use [`git worktree move`](https://git-scm.com/docs/git-worktree#Documentation/git-worktree.txt-move)
+without forcing locked worktrees or worktrees containing submodules. Move or
+metadata-write failures roll back earlier changes; any rollback failure reports
+the affected paths for repair. Occupied destinations are never overwritten.
+After a rename, terminals and editors opened at the old path should reopen the
+new path shown in the result.
+
+`sf down` and `sf delete` operate on recorded worktrees and preserve files or
+checkouts left outside the manifest, including entries removed during this review.
 
 ## Deleting a super-feature (guided)
 
@@ -91,7 +131,7 @@ the parent project **even with `$WORKWOOD_DATA` unset**, and the `[feature]` arg
 defaults to that feature:
 
 ```sh
-cd "$WORKWOOD_DATA/features/demo/api"
+cd "$WORKWOOD_DATA/features/demo/api--feature_login"
 workwood sf status        # no feature arg → "demo"
 workwood action tmux      # same
 workwood                  # TUI opens straight into demo's Actions panel (esc → menu)

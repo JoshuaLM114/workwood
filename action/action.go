@@ -20,6 +20,8 @@
 package action
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +33,7 @@ import (
 
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/libs/fileio"
+	"github.com/JoshuaLM114/workwood/libs/process"
 	"github.com/JoshuaLM114/workwood/models"
 )
 
@@ -38,11 +41,11 @@ import (
 // which lifecycle functions it defines (Run + Validate are required to run; Init
 // is an optional bootstrap that creates the files the action needs).
 type Action struct {
-	Name        string
-	Description string
-	HasRun      bool
-	HasValidate bool
-	HasInit     bool
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	HasRun      bool   `json:"has_run"`
+	HasValidate bool   `json:"has_validate"`
+	HasInit     bool   `json:"has_init"`
 }
 
 // Runnable reports whether an action defines both required functions.
@@ -197,6 +200,34 @@ func Command(cfg *models.Config, slug, name string, set, vars map[string]string)
 		}
 	}
 	return invoke(cfg, slug, name, "Run", set, vars)
+}
+
+// CommandContext prepares an explicit action lifecycle function with cancellation.
+// The caller supplies stdin/stdout/stderr and executes the returned command.
+func CommandContext(ctx context.Context, cfg *models.Config, slug, name, mode string, set, vars map[string]string) (*exec.Cmd, error) {
+	fn := ""
+	switch mode {
+	case "run":
+		fn = "Run"
+		if path := Find(cfg, name); path != "" {
+			if _, _, _, hasValidate, _ := scanScript(path); !hasValidate {
+				return nil, i18n.Err("err.action_missing_method", name, "Validate")
+			}
+		}
+	case "validate":
+		fn = "Validate"
+	case "init":
+		fn = "Init"
+	default:
+		return nil, fmt.Errorf("action mode must be run, validate or init")
+	}
+	prepared, err := invoke(cfg, slug, name, fn, set, vars)
+	if err != nil {
+		return nil, err
+	}
+	cmd := process.CommandContext(ctx, prepared.Path, prepared.Args[1:]...)
+	cmd.Dir, cmd.Env = prepared.Dir, prepared.Env
+	return cmd, nil
 }
 
 // Init runs the action's Init function — its bootstrap that creates the minimal

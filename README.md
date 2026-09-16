@@ -23,14 +23,15 @@ link, not as a path segment).
 | **Saved target presets** | `$WORKWOOD_DATA/targets/<name>.yml` | you | no |
 | **Base clones + feature worktrees** | `$WORKWOOD_DATA/{main,features}/` (fixed, not configurable) | you | no |
 | **Feature back-link** — lets you run from a feature folder | `$WORKWOOD_DATA/features/<feature>/.workwood/link.yml` | you | no |
+| **Local project registry** — UUID, root and data directory | `~/.workwood/projects.yml` | you | no |
 | **Global app settings** — language, update-check, data-dir fallback | `~/.workwood/config.yaml` | you | no |
 
 The split is deliberate: everything **shared and portable** is committed in the
 super-repo and linked by **UUID**; everything **personal** (including your
 editable display names) lives in the external data dir, so renaming a project or
 feature, or re-pathing your checkouts, never disturbs the committed files or a
-teammate. `~/.workwood/` holds *only* global app settings — there is no project
-registry.
+teammate. `~/.workwood/` holds global app settings and a local project registry
+for CLI selection and MCP discovery. `workwood init` registers projects automatically.
 
 ### Two names per thing
 
@@ -43,7 +44,7 @@ has a committed **shorthand** that prefixes its git branches (see Super-features
 ## Install
 
 workwood is distributed as source and built by the Go toolchain — there are no
-pre-built binaries, so installing requires **Go 1.25+** and **git** on PATH. Base
+pre-built binaries, so installing requires **Go 1.25.5+** and **git** on PATH. Base
 repos are cloned with plain `git clone <url>`, so whatever auth your git already
 uses (SSH keys, credential helper) is what workwood uses.
 
@@ -108,20 +109,42 @@ workwood action ssh  my-feature             # open a shell in a chosen target
 ```
 
 `workwood init` turns a cloned super-repo into a working setup; it's safe to
-re-run (it only fills what's missing). If `$WORKWOOD_DATA` is unset, the first run
-prompts for a path and saves it in `~/.workwood/config.yaml`.
+re-run (it fills missing setup metadata). When no data path is known, interactive
+initialization prompts for one and saves it in `~/.workwood/config.yaml`.
 
 ## Selecting a project
 
-There is no registry — workwood finds the project by **location**:
+workwood finds projects by location or a registered UUID:
 
-1. `-p <path>` / `--project <path>` — act on the super-repo at that path
-2. otherwise, walk up from your cwd to the nearest `workwood.yml`
+1. `-p <path-or-uuid>` / `--project <path-or-uuid>` selects a super-repo
+2. otherwise, walk up from cwd to `workwood.yml` or a feature back-link
+
+`workwood init` records the project's root and data directory in
+`~/.workwood/projects.yml`. Use `workwood project list` to see registrations,
+`workwood project register <path> --data-dir <path>` for existing projects, and
+`workwood project unregister <uuid>` to forget an entry while keeping its files.
+
+For older setups, run `workwood project check [path-or-uuid]` for a read-only JSON
+report, then `workwood init [path-or-uuid]` when it reports `needs_init`. Supply
+`--data-dir /existing/project-data` if the path is unknown. Both commands detect
+the project from nested directories or feature back-links. Initialization records
+the setup version and registration while preserving checkouts and local settings.
+See [existing project setup](docs/setup.md#check-an-existing-setup).
 
 ```sh
 workwood project                          # show the current project (uuid, names, paths)
 workwood project rename "Workwood demo"    # set YOUR local display name (slug unchanged)
 ```
+
+## MCP for agents
+
+Run `workwood mcp` as a local stdio server. Agents can discover registered and
+current projects and use 45 tools for project/repo management, super-features, folder
+review and repair, targets/presets, actions and settings. Each call can choose a
+project by UUID or path. The server uses [mcp-go](https://github.com/mark3labs/mcp-go).
+
+See [MCP setup and tool reference](docs/mcp.md) for client configuration,
+project discovery, tool inputs and execution behavior.
 
 ## The TUI
 
@@ -398,6 +421,9 @@ scripts, no tool-imposed semantics.
 | `workwood targets show [feature]` | show a feature's working set |
 | `workwood targets generate [feature]` | (re)write `<feature>.yml` from current repos + worktrees |
 | `workwood lang [en\|ja]` | show or set the UI language |
+| `workwood mcp [-p <path-or-uuid>] [--data-dir <path>]` | serve MCP tools over local stdio |
+| `workwood project list / register / unregister` | manage the local discovery registry |
+| `workwood project check [path-or-uuid] [--data-dir <path>]` | detect an existing project and report setup readiness without changing files |
 | `workwood version` | print the build + file-schema version |
 
 `super-feature` and `sf` are interchangeable. `-p/--project <path>` works on any
@@ -444,12 +470,13 @@ content are not translated.
 | `config/` | locate the super-repo, resolve app settings + the data dir, and load `workwood-state.yml` (`config.go`, `state.go`) |
 | `projectdef/` | parse/scaffold a super-repo's `workwood.yml` (id + name + repos) |
 | `manifest/` | load/save super-feature manifests (id + parent project) |
-| `gitx/` | thin wrappers over the `git` CLI |
+| `libs/gitx/` | thin wrappers over the `git` CLI |
 | `targetcfg/` | the target working set + presets + candidate tree (`.workwood/targets.yml` expansion) |
 | `action/` | write the targets `context.yml` → exec an action from `workwood/actions` |
 | `superfeature/` | create/add/up/down/remove/status/list/rename + run-action |
 | `repos/` | clone/refresh the base reference clones |
 | `update/` | once-a-day "newer release available" check (passive, stderr) |
+| `mcpserver/` | stdio MCP server, project discovery and structured tool handlers |
 | `version/` | build + on-disk schema version and the compatibility check |
 
 ## Notes

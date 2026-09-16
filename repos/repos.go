@@ -4,6 +4,7 @@
 package repos
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -115,9 +116,9 @@ func Checkout(dir, branch string) error { return gitx.Checkout(dir, branch) }
 // BranchRef is a branch available in a base clone, with where it exists. A branch
 // can be both local and on origin (e.g. main).
 type BranchRef struct {
-	Name   string
-	Local  bool
-	Remote bool
+	Name   string `json:"name"`
+	Local  bool   `json:"local"`
+	Remote bool   `json:"remote"`
 }
 
 // RemoteBranchesFor lists a not-yet-cloned repo's branches straight from its clone
@@ -166,29 +167,45 @@ func Branches(dir string) []BranchRef {
 }
 
 // Sync clones missing repos and fetches existing ones (parking each on its default
-// branch, fast-forwarded). Unlike Pull it captures git/gh output and returns a log,
+// branch, fast-forwarded). Unlike Pull it captures Git output and returns a log,
 // so the TUI can run it without corrupting the terminal. Returns the lines done.
 func Sync(cfg *models.Config, pd *models.ProjectDef) ([]string, error) {
+	return SyncContext(context.Background(), cfg, pd)
+}
+
+// SyncContext clones and fast-forwards source repos, reporting partial progress
+// and propagating fetch, checkout and pull failures.
+func SyncContext(ctx context.Context, cfg *models.Config, pd *models.ProjectDef) ([]string, error) {
 	if err := os.MkdirAll(cfg.MainDir, 0o755); err != nil {
 		return nil, err
 	}
 	var log []string
 	for _, r := range pd.Repos {
 		dest := cfg.BaseRepo(r.Name)
-		if gitx.IsRepo(dest) {
-			if err := gitx.FetchAllQuiet(dest); err != nil {
-				return log, err
+		switch ClassifyClone(dest) {
+		case StateClone:
+			if _, err := gitx.RunContext(ctx, dest, "fetch", "--all", "--prune"); err != nil {
+				return log, fmt.Errorf("%s: %w", r.Name, err)
 			}
 			log = append(log, i18n.T("repos.fetched", r.Name))
-		} else {
-			if err := gitx.CloneQuiet(r.URL, dest); err != nil {
-				return log, err
+		case StateMissing:
+			if _, err := gitx.RunContext(ctx, "", "clone", "--", r.URL, dest); err != nil {
+				return log, fmt.Errorf("%s: %w", r.Name, err)
 			}
 			log = append(log, i18n.T("repos.cloned", r.Name, r.URL))
+		default:
+			return log, fmt.Errorf("%s is not a base clone; inspect %s", r.Name, dest)
 		}
 		if r.DefaultBranch != "" {
-			_ = gitx.Checkout(dest, r.DefaultBranch)
-			_ = gitx.PullFFOnly(dest)
+			if !gitx.ValidBranchName(dest, r.DefaultBranch) {
+				return log, fmt.Errorf("invalid default branch %q for %s", r.DefaultBranch, r.Name)
+			}
+			if _, err := gitx.RunContext(ctx, dest, "checkout", r.DefaultBranch); err != nil {
+				return log, fmt.Errorf("%s: %w", r.Name, err)
+			}
+		}
+		if _, err := gitx.RunContext(ctx, dest, "pull", "--ff-only"); err != nil {
+			return log, fmt.Errorf("%s: %w", r.Name, err)
 		}
 	}
 	return log, nil
@@ -202,20 +219,30 @@ func Pull(cfg *models.Config, pd *models.ProjectDef) error {
 	}
 	for _, r := range pd.Repos {
 		dest := cfg.BaseRepo(r.Name)
-		if gitx.IsRepo(dest) {
+		switch ClassifyClone(dest) {
+		case StateClone:
 			fmt.Println(i18n.T("repos.fetching", r.Name))
 			if err := gitx.FetchAll(dest); err != nil {
-				return err
+				return fmt.Errorf("%s: %w", r.Name, err)
 			}
-		} else {
+		case StateMissing:
 			fmt.Println(i18n.T("repos.cloning", r.Name, r.URL))
 			if err := gitx.Clone(r.URL, dest); err != nil {
-				return err
+				return fmt.Errorf("%s: %w", r.Name, err)
 			}
+		default:
+			return fmt.Errorf("%s is not a base clone; inspect %s", r.Name, dest)
 		}
 		if r.DefaultBranch != "" {
-			_ = gitx.Checkout(dest, r.DefaultBranch)
-			_ = gitx.PullFFOnly(dest)
+			if !gitx.ValidBranchName(dest, r.DefaultBranch) {
+				return fmt.Errorf("invalid default branch %q for %s", r.DefaultBranch, r.Name)
+			}
+			if err := gitx.Checkout(dest, r.DefaultBranch); err != nil {
+				return fmt.Errorf("%s: %w", r.Name, err)
+			}
+		}
+		if err := gitx.PullFFOnly(dest); err != nil {
+			return fmt.Errorf("%s: %w", r.Name, err)
 		}
 	}
 	fmt.Println(i18n.T("repos.ready", cfg.MainDir))

@@ -40,6 +40,11 @@ Mental model (memorize this):
 
 ## Invoking it
 
+- `workwood mcp` serves the agent tools over local stdio. `init` automatically
+  registers projects in `~/.workwood/projects.yml`; `projects_list` discovers
+  them and the current project. `project_detect` checks existing setup readiness;
+  `project_init` upgrades it using the returned arguments. Tools accept a project
+  UUID or path. See `docs/mcp.md`.
 - `workwood` with no args opens the **TUI**; subcommands run headless. `-p <path>`
   targets a project explicitly.
 - The project is found by walking **up** from cwd to a `workwood.yml`, **or** —
@@ -51,7 +56,10 @@ Mental model (memorize this):
 ## Commands at a glance
 
 ```
-workwood init [path]                         scaffold/sync a super-repo
+workwood init [path] [--data-dir <path>]      scaffold/upgrade and register a super-repo
+workwood mcp                                 serve MCP tools over local stdio
+workwood project check [path-or-uuid] [--data-dir <path>]   read-only setup report
+workwood project list | register [path] --data-dir <path> | unregister <uuid>
 workwood repos pull | list                   clone/refresh base repos
 workwood sf create <name> [desc] [--shorthand s]
 workwood sf add <name> <repo> <wt-branch> [--from <src>] [--no-feature-prefix] [--existing]
@@ -84,6 +92,8 @@ attach an existing branch explicitly.
 
 ## When you want to… → read
 
+- **Connect an agent via MCP**, discover projects, or use headless tools →
+  `docs/mcp.md`
 - **Set up / onboard a project** (init, `workwood.yml`, repos, `$WORKWOOD_DATA`) →
   `docs/setup.md`
 - **Create/rebuild features & worktrees**, or **run from a feature folder** →

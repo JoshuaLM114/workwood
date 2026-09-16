@@ -39,14 +39,14 @@ const (
 
 // Node is one row in the flat candidate tree (depth + parent index encode nesting).
 type Node struct {
-	Key     string // working-set key (the editable name)
-	Path    string // resolved absolute path
-	Kind    Kind
-	Depth   int
-	Parent  int  // index of the parent node, -1 for top-level
-	HasKids bool // a service parent with children
-	Toggled bool // present in the working set
-	Exists  bool // path exists on disk
+	Key     string `json:"key"`  // working-set key (the editable name)
+	Path    string `json:"path"` // resolved absolute path
+	Kind    Kind   `json:"kind"`
+	Depth   int    `json:"depth"`
+	Parent  int    `json:"parent"`   // index of the parent node, -1 for top-level
+	HasKids bool   `json:"has_kids"` // a service parent with children
+	Toggled bool   `json:"toggled"`  // present in the working set
+	Exists  bool   `json:"exists"`   // path exists on disk
 }
 
 // Toggleable reports whether a node can be enabled/disabled (everything except a
@@ -124,17 +124,20 @@ func LoadWorking(cfg *models.Config, m *models.Manifest) (models.Set, error) {
 	return out, nil
 }
 
-// Working returns the feature's effective working set: the persisted one if it
-// has any entries, otherwise a freshly-seeded clean set (reference repos + the
-// feature's worktrees). It does NOT persist — edits persist via SaveWorking, so a
-// feature stays on the clean default until the user actually changes something.
+// Working returns a persisted selection, including an explicitly empty set, or
+// seeds the default targets when no selection has been saved.
 func Working(cfg *models.Config, pd *models.ProjectDef, m *models.Manifest) (models.Set, error) {
-	ws, err := LoadWorking(cfg, m)
+	st, err := config.LoadState(cfg.StateFile)
 	if err != nil {
 		return nil, err
 	}
-	if len(ws) > 0 {
-		return ws, nil
+	f := st.Features[m.ID]
+	if f.WorkingSetConfigured || len(f.Targets) > 0 {
+		set := models.Set{}
+		for k, v := range f.Targets {
+			set[k] = v
+		}
+		return set, nil
 	}
 	return CleanSet(cfg, pd, m), nil
 }

@@ -1,14 +1,15 @@
 // Package config resolves the three places workwood keeps state and turns the
 // project you're standing in into the absolute paths the rest of the tool uses.
 //
-// workwood is a GLOBAL CLI with NO project registry. State lives in three places:
+// workwood keeps shared definitions, global settings and per-project local data:
 //
 //   - the SUPER-REPO (committed, shared): workwood.yml at the root holds the
 //     project definition + its UUID identity + canonical name; a workwood/ folder
 //     holds actions/ (the only action source) and super-features/ (the manifests,
 //     each carrying its own UUID + a back-link to the project UUID).
-//   - the GLOBAL user dir ~/.workwood (or $WORKWOOD_HOME): app settings ONLY —
-//     language, update-check, and a saved fallback for the data-dir path.
+//   - the GLOBAL user dir ~/.workwood (or $WORKWOOD_HOME): app settings —
+//     language, update-check and a data-dir fallback — plus projects.yml, the
+//     local UUID-to-root/data-directory registry.
 //   - the EXTERNAL data dir $WORKWOOD_DATA (never committed): set per project, it
 //     points straight at this project's data dir, holding the developer's
 //     workwood-state.yml (active names, per-feature targets, optional path
@@ -25,6 +26,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -242,6 +244,8 @@ func findProject(dir string) (root, dataDir, feature string, err error) {
 	for {
 		if _, e := os.Stat(filepath.Join(dir, ProjectDefName)); e == nil {
 			return dir, "", "", nil
+		} else if !os.IsNotExist(e) {
+			return "", "", "", e
 		}
 		linkPath := filepath.Join(dir, models.RepoWorkwoodDirName, models.FeatureLinkName)
 		if _, e := os.Stat(linkPath); e == nil {
@@ -249,10 +253,22 @@ func findProject(dir string) (root, dataDir, feature string, err error) {
 			if e != nil {
 				return "", "", "", e
 			}
+			if link.Version > FeatureLinkVersion {
+				return "", "", "", fmt.Errorf("feature link %s requires a newer workwood", linkPath)
+			}
 			if _, e := os.Stat(filepath.Join(link.SuperRepo, ProjectDefName)); e != nil {
 				return "", "", "", &StaleLinkError{Link: linkPath, SuperRepo: link.SuperRepo}
 			}
+			pd, e := projectdef.Load(filepath.Join(link.SuperRepo, ProjectDefName))
+			if e != nil {
+				return "", "", "", e
+			}
+			if link.Project != "" && link.Project != pd.ID {
+				return "", "", "", fmt.Errorf("feature link %s refers to project %s, but %s has identity %s", linkPath, link.Project, link.SuperRepo, pd.ID)
+			}
 			return link.SuperRepo, link.DataDir, link.Feature, nil
+		} else if !os.IsNotExist(e) {
+			return "", "", "", e
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {

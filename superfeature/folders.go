@@ -24,15 +24,15 @@ import (
 // FolderChange identifies a recorded folder that needs the repo--branch name.
 // Path is the proposed replacement, relative to FeaturesDir.
 type FolderChange struct {
-	Worktree models.Worktree
-	Path     string
-	Missing  bool
+	Worktree models.Worktree `json:"worktree"`
+	Path     string          `json:"path"`
+	Missing  bool            `json:"missing"`
 }
 
 // FolderDecision renames a folder, or drops only its manifest entry when false.
 type FolderDecision struct {
 	FolderChange
-	Rename bool
+	Rename bool `json:"rename"`
 }
 
 // CheckFolderNames proposes collision-free names without changing any files.

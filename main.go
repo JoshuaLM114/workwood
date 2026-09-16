@@ -2,11 +2,10 @@
 // "super-features" that can span repos and hold multiple branches of the same
 // repo (which submodules can't).
 //
-// workwood has NO project registry. You run it from inside a super-repo (it walks
-// up to a workwood.yml) or point at one with -p <path>. The super-repo holds the
-// committed project def + plugins + super-feature manifests; your per-developer
-// state lives in $WORKWOOD_DATA/<project-uuid>/workwood-state.yml; ~/.workwood
-// keeps only global app settings (language, update-check, the data-dir fallback).
+// Projects are discovered by workwood.yml, feature back-links, or the local
+// ~/.workwood/projects.yml registry. The super-repo holds committed definitions,
+// actions and feature manifests; WORKWOOD_DATA holds clones, checkouts and local
+// state. The MCP server exposes the same operations over local stdio.
 //
 // User-facing text is loaded from the message catalog (package i18n) so the CLI
 // can run in English or Japanese; pick with `workwood lang ja` or $WORKWOOD_LANG.
@@ -14,20 +13,26 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
-	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
 	"github.com/JoshuaLM114/workwood/action"
 	"github.com/JoshuaLM114/workwood/config"
 	"github.com/JoshuaLM114/workwood/i18n"
 	"github.com/JoshuaLM114/workwood/manifest"
+	"github.com/JoshuaLM114/workwood/mcpserver"
 	"github.com/JoshuaLM114/workwood/models"
 	"github.com/JoshuaLM114/workwood/projectdef"
 	"github.com/JoshuaLM114/workwood/repos"
@@ -39,8 +44,7 @@ import (
 )
 
 func main() {
-	initLang()         // resolve + load the message catalog before any output
-	notifyIfOutdated() // best-effort: at most once a day, hint when a newer release exists
+	initLang() // resolve + load the message catalog before any output
 
 	args := os.Args[1:]
 	projectFlag, args := extractProjectFlag(args)
@@ -51,8 +55,21 @@ func main() {
 		args = args[1:]
 	}
 
+	if cmd == "mcp" {
+		must(runMCP(projectFlag, args))
+		return
+	}
+	if (cmd == "project" || cmd == "projects") && len(args) > 0 && args[0] == "check" {
+		must(runProject(projectFlag, args))
+		return
+	}
+	notifyIfOutdated()
+
 	switch cmd {
 	case "init":
+		if pos, _ := splitFlags(args); len(pos) == 0 && projectFlag != "" {
+			args = append([]string{projectFlag}, args...)
+		}
 		must(runInit(args))
 	case "lang", "language":
 		must(runLang(args))
@@ -79,6 +96,29 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+}
+
+// runMCP keeps stdout exclusively for JSON-RPC and never prompts for settings.
+func runMCP(project string, args []string) error {
+	flags := flag.NewFlagSet("workwood mcp", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	dataDir := flags.String("data-dir", "", "default project's local data directory")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("usage: workwood mcp [-p <project>] [--data-dir <path>]")
+	}
+	s, err := mcpserver.New(mcpserver.Options{Project: project, DataDir: *dataDir})
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return s.Serve(ctx, os.Stdin, os.Stdout)
 }
 
 // initLang resolves the active language (env > app setting > $LANG > en) and
@@ -128,13 +168,39 @@ func extractProjectFlag(args []string) (string, []string) {
 // loadProject locates the super-repo (cwd walk-up or -p path), resolves the data
 // dir, and builds the Config + loads its project definition.
 func loadProject(projectFlag string) (*models.Config, *models.ProjectDef, error) {
+	registered, err := config.ListProjects()
+	if err != nil {
+		return nil, nil, err
+	}
+	expectedID := ""
+	for _, p := range registered {
+		if projectFlag == p.ID {
+			expectedID = p.ID
+			projectFlag = p.Root
+			break
+		}
+	}
 	loc, err := config.LocateProject(projectFlag)
 	if err != nil {
 		return nil, nil, err
 	}
+	if expectedID != "" && expectedID != loc.PD.ID {
+		return nil, nil, fmt.Errorf("registered project %s has a different identity at %s; register its current location", expectedID, projectFlag)
+	}
 	// A feature link carries its own data dir, so running from a feature folder
 	// works with neither the super-repo as cwd nor $WORKWOOD_DATA set.
 	dataDir := loc.DataDir
+	if dataDir == "" {
+		dataDir = os.Getenv(config.EnvData)
+	}
+	if dataDir == "" {
+		for _, p := range registered {
+			if p.ID == loc.PD.ID {
+				dataDir = p.DataDir
+				break
+			}
+		}
+	}
 	if dataDir == "" {
 		if dataDir, err = ensureDataDir(); err != nil {
 			return nil, nil, err
@@ -231,36 +297,33 @@ func runLang(args []string) error {
 
 // ---- init -----------------------------------------------------------------
 
-// runInit scaffolds (idempotently) a project: ensures workwood.yml carries a
-// UUID, creates the committed workwood/{plugins,super-features} dirs, resolves
-// the data dir, and writes the developer's workwood-state.yml — tracking any
-// already-committed super-features. Safe to re-run; only fills what's missing.
+// runInit finds an existing project or scaffolds an explicit directory, updates
+// its local setup metadata, and registers the resolved root and data directory.
 func runInit(args []string) error {
-	pos, _ := splitFlags(args)
+	pos, flags := splitFlags(args)
 	path := "."
 	if len(pos) > 0 {
 		path = pos[0]
 	}
-	root, err := filepath.Abs(path)
+	status, err := config.DetectProject(path, flags["data-dir"])
+	if err != nil {
+		return err
+	}
+	dataDir := firstNonEmpty(status.DataDir, flags["data-dir"])
+	if dataDir == "" {
+		dataDir, err = ensureDataDir()
+		if err != nil {
+			return err
+		}
+	}
+	result, err := config.InitializeProject(path, dataDir, "")
 	if err != nil {
 		return err
 	}
 
-	pd, wroteDef, err := ensureDef(root)
-	if err != nil {
-		return err
-	}
-	dataDir, err := ensureDataDir()
-	if err != nil {
-		return err
-	}
-	res, err := config.InitProject(root, pd, dataDir)
-	if err != nil {
-		return err
-	}
-
+	root, res := result.Project.Root, result.Initialized
 	fmt.Print(i18n.T("init.done", root, filepath.Join(root, config.ProjectDefName), res.ActionsDir, res.ManifestsDir, res.StateFile))
-	if wroteDef {
+	if result.DefinitionChanged {
 		fmt.Println(i18n.T("init.commit_hint", config.ProjectDefName))
 	}
 	if res.Tracked > 0 {
@@ -269,55 +332,62 @@ func runInit(args []string) error {
 	return nil
 }
 
-// ensureDef loads the project def, creating it with a fresh UUID when absent and
-// back-filling a missing id/name on an existing one. Returns whether it wrote the
-// committed file (so the caller can nudge the user to commit it).
-func ensureDef(root string) (*models.ProjectDef, bool, error) {
-	defPath := filepath.Join(root, config.ProjectDefName)
-	if _, err := os.Stat(defPath); os.IsNotExist(err) {
-		pd := &models.ProjectDef{
-			ID:    uuid.NewString(),
-			Name:  filepath.Base(root),
-			Repos: []models.Repo{},
-		}
-		if err := projectdef.Save(defPath, pd); err != nil {
-			return nil, false, err
-		}
-		fmt.Println(i18n.T("init.scaffolded", defPath))
-		return pd, true, nil
-	}
-	pd, err := projectdef.Load(defPath)
-	if err != nil {
-		return nil, false, err
-	}
-	changed := false
-	if pd.ID == "" {
-		pd.ID = uuid.NewString()
-		changed = true
-	}
-	if pd.Name == "" {
-		pd.Name = filepath.Base(root)
-		changed = true
-	}
-	if changed {
-		if err := projectdef.Save(defPath, pd); err != nil {
-			return nil, false, err
-		}
-	}
-	return pd, changed, nil
-}
-
 // ---- project (info / rename) ----------------------------------------------
 
 func runProject(projectFlag string, args []string) error {
-	cfg, _, err := loadProject(projectFlag)
-	if err != nil {
-		return err
-	}
 	sub := "info"
 	if len(args) > 0 {
 		sub = args[0]
 		args = args[1:]
+	}
+	switch sub {
+	case "check":
+		pos, flags := splitFlags(args)
+		path := projectFlag
+		if len(pos) > 0 {
+			path = pos[0]
+		}
+		status, err := config.DetectProject(path, flags["data-dir"])
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if encodeErr := encoder.Encode(status); encodeErr != nil {
+			return encodeErr
+		}
+		return err
+	case "list":
+		projects, err := config.ListProjects()
+		if err != nil {
+			return err
+		}
+		for _, p := range projects {
+			fmt.Printf("%s  %s  %s  %s\n", p.ID, p.Name, p.Root, p.DataDir)
+		}
+		return nil
+	case "register":
+		pos, flags := splitFlags(args)
+		path := projectFlag
+		if len(pos) > 0 {
+			path = pos[0]
+		}
+		if path == "" {
+			path = "."
+		}
+		dataDir := firstNonEmpty(flags["data-dir"], os.Getenv(config.EnvData))
+		entry, err := config.RegisterProject(path, dataDir)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s  %s  %s\n", entry.ID, entry.Root, entry.DataDir)
+		return nil
+	case "unregister":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: workwood project unregister <uuid>")
+		}
+		return config.UnregisterProject(args[0])
+	}
+	cfg, _, err := loadProject(projectFlag)
+	if err != nil {
+		return err
 	}
 	switch sub {
 	case "info":
@@ -905,7 +975,7 @@ func renameFeature(cfg *models.Config, slug, newName string) error {
 // positional args. Boolean flags map to "".
 func splitFlags(args []string) (pos []string, flags map[string]string) {
 	flags = map[string]string{}
-	valueFlags := map[string]bool{"from": true, "source": true, "name": true, "targets": true, "shorthand": true}
+	valueFlags := map[string]bool{"from": true, "source": true, "name": true, "targets": true, "shorthand": true, "data-dir": true}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if len(a) > 2 && a[:2] == "--" {

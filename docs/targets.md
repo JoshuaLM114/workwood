@@ -51,3 +51,10 @@ is distinct from a feature folder's `.workwood/link.yml` (the back-link, one lev
 up) — same dir name, different purpose.
 
 → How an action consumes these paths: `docs/actions.md`.
+
+## Agent tools
+
+The MCP server exposes target inspection/replacement, monorepo expansion,
+pruning, generation and preset management. `targets_set` replaces the enabled
+key-to-absolute-path map; an empty map persists as no selected targets. Use
+`preset_save` and `preset_load` to reuse a selection. See [MCP tools](mcp.md).

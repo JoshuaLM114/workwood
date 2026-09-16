@@ -1,10 +1,13 @@
 package repos
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/JoshuaLM114/workwood/models"
 )
@@ -186,4 +189,39 @@ func mustMkdir(t *testing.T, p string) {
 	if err := os.MkdirAll(p, 0o755); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestSyncReportsCheckoutAndPullFailures(t *testing.T) {
+	for _, kind := range []string{"checkout", "divergence", "not-clone"} {
+		t.Run(kind, func(t *testing.T) {
+			up, data := t.TempDir(), t.TempDir()
+			gitIn(t, up, "init", "-q", "-b", "main")
+			gitIn(t, up, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "initial")
+			cfg := &models.Config{MainDir: filepath.Join(data, "main")}
+			pd := &models.ProjectDef{Repos: []models.Repo{{Name: "api", URL: up, DefaultBranch: "main"}}}
+			if kind == "not-clone" {
+				require.NoError(t, os.MkdirAll(cfg.BaseRepo("api"), 0o755))
+			} else {
+				_, err := Sync(cfg, pd)
+				require.NoError(t, err)
+				if kind == "checkout" {
+					pd.Repos[0].DefaultBranch = "missing"
+				} else {
+					gitIn(t, up, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "remote")
+					gitIn(t, cfg.BaseRepo("api"), "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "local")
+				}
+			}
+			_, err := Sync(cfg, pd)
+			require.Error(t, err)
+			require.Error(t, Pull(cfg, pd))
+		})
+	}
+}
+
+func TestSyncCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	cfg := &models.Config{MainDir: filepath.Join(t.TempDir(), "main")}
+	_, err := SyncContext(ctx, cfg, &models.ProjectDef{Repos: []models.Repo{{Name: "api", URL: t.TempDir()}}})
+	require.ErrorIs(t, err, context.Canceled)
 }

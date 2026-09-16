@@ -9,6 +9,7 @@
 package superfeature
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -270,6 +271,11 @@ func ValidateAdd(cfg *models.Config, m *models.Manifest, spec AddSpec) error {
 // Add provisions one worktree for an existing feature and records it in the
 // manifest.
 func Add(cfg *models.Config, pd *models.ProjectDef, name string, spec AddSpec) (models.Worktree, error) {
+	return AddContext(context.Background(), cfg, pd, name, spec)
+}
+
+// AddContext provisions a worktree with cancellable Git operations.
+func AddContext(ctx context.Context, cfg *models.Config, pd *models.ProjectDef, name string, spec AddSpec) (models.Worktree, error) {
 	if err := validName(name); err != nil {
 		return models.Worktree{}, err
 	}
@@ -278,7 +284,7 @@ func Add(cfg *models.Config, pd *models.ProjectDef, name string, spec AddSpec) (
 	if err != nil {
 		return models.Worktree{}, i18n.Errw(err, "err.no_manifest_create", path)
 	}
-	wt, err := provision(cfg, pd, m, spec)
+	wt, err := provisionContext(ctx, cfg, pd, m, spec)
 	if err != nil {
 		return models.Worktree{}, err
 	}
@@ -289,10 +295,10 @@ func Add(cfg *models.Config, pd *models.ProjectDef, name string, spec AddSpec) (
 	return wt, nil
 }
 
-// provision creates the actual worktree (without saving the manifest) and
+// provisionContext creates the actual worktree (without saving the manifest) and
 // returns the entry to record. It validates the requested branch mode after
 // fetching and allocates an unused repo-and-branch directory.
-func provision(cfg *models.Config, pd *models.ProjectDef, m *models.Manifest, spec AddSpec) (models.Worktree, error) {
+func provisionContext(ctx context.Context, cfg *models.Config, pd *models.ProjectDef, m *models.Manifest, spec AddSpec) (models.Worktree, error) {
 	if err := validName(spec.Repo); err != nil {
 		return models.Worktree{}, err
 	}
@@ -313,7 +319,10 @@ func provision(cfg *models.Config, pd *models.ProjectDef, m *models.Manifest, sp
 	}
 
 	// Refresh remote refs before checking names and resolving the source.
-	gitx.Fetch(baseRepo)
+	_, _ = gitx.RunContext(ctx, baseRepo, "fetch", "origin", "--prune")
+	if err := ctx.Err(); err != nil {
+		return models.Worktree{}, err
+	}
 
 	if err := ValidateAdd(cfg, m, spec); err != nil {
 		return models.Worktree{}, err
@@ -324,16 +333,16 @@ func provision(cfg *models.Config, pd *models.ProjectDef, m *models.Manifest, sp
 	var err error
 	if spec.ExistingBranch {
 		if gitx.HasLocalBranch(baseRepo, branch) {
-			err = gitx.AddWorktreeExistingLocal(baseRepo, abs, branch)
+			_, err = gitx.RunContext(ctx, baseRepo, "worktree", "add", "--", abs, branch)
 		} else {
-			err = gitx.AddWorktreeTrackRemote(baseRepo, abs, branch)
+			_, err = gitx.RunContext(ctx, baseRepo, "worktree", "add", "--track", "-b", branch, "--", abs, "origin/"+branch)
 		}
 	} else {
 		baseref := base
 		if gitx.HasRemoteBranch(baseRepo, base) {
 			baseref = "origin/" + base
 		}
-		err = gitx.AddWorktreeNewBranch(baseRepo, abs, branch, baseref)
+		_, err = gitx.RunContext(ctx, baseRepo, "worktree", "add", "--no-track", "-b", branch, "--", abs, baseref)
 	}
 	if err != nil {
 		return models.Worktree{}, err
@@ -341,20 +350,23 @@ func provision(cfg *models.Config, pd *models.ProjectDef, m *models.Manifest, sp
 	return models.Worktree{Repo: spec.Repo, Branch: branch, Base: base, Path: rel}, nil
 }
 
-// addWorktree attaches to whatever branch source exists, in priority order:
+// addWorktreeContext attaches to whichever branch source exists, in priority order:
 // local branch → origin branch → a new branch cut from base (--no-track).
-func addWorktree(baseRepo, branch, base, abs string) error {
+func addWorktreeContext(ctx context.Context, baseRepo, branch, base, abs string) error {
 	switch {
 	case gitx.HasLocalBranch(baseRepo, branch):
-		return gitx.AddWorktreeExistingLocal(baseRepo, abs, branch)
+		_, err := gitx.RunContext(ctx, baseRepo, "worktree", "add", "--", abs, branch)
+		return err
 	case gitx.HasRemoteBranch(baseRepo, branch):
-		return gitx.AddWorktreeTrackRemote(baseRepo, abs, branch)
+		_, err := gitx.RunContext(ctx, baseRepo, "worktree", "add", "--track", "-b", branch, "--", abs, "origin/"+branch)
+		return err
 	default:
 		baseref := base
 		if gitx.HasRemoteBranch(baseRepo, base) {
 			baseref = "origin/" + base
 		}
-		return gitx.AddWorktreeNewBranch(baseRepo, abs, branch, baseref)
+		_, err := gitx.RunContext(ctx, baseRepo, "worktree", "add", "--no-track", "-b", branch, "--", abs, baseref)
+		return err
 	}
 }
 
@@ -440,6 +452,11 @@ func slugify(s string) string {
 // is asked first — return false to skip that worktree instead of creating it. A
 // nil onNew creates them without asking (the non-interactive default).
 func Up(cfg *models.Config, name string, onNew func(repo, branch string) bool) ([]string, error) {
+	return UpContext(context.Background(), cfg, name, onNew)
+}
+
+// UpContext rebuilds checkouts with cancellable fetch and worktree operations.
+func UpContext(ctx context.Context, cfg *models.Config, name string, onNew func(repo, branch string) bool) ([]string, error) {
 	changes, err := CheckFolderNames(cfg, name)
 	if err != nil {
 		return nil, err
@@ -472,7 +489,10 @@ func Up(cfg *models.Config, name string, onNew func(repo, branch string) bool) (
 			log = append(log, i18n.T("log.exists", w.Path))
 			continue
 		}
-		gitx.Fetch(baseRepo)
+		_, _ = gitx.RunContext(ctx, baseRepo, "fetch", "origin", "--prune")
+		if err := ctx.Err(); err != nil {
+			return log, err
+		}
 		// No existing branch anywhere → this would create a new local branch.
 		if onNew != nil &&
 			!gitx.HasLocalBranch(baseRepo, w.Branch) &&
@@ -481,7 +501,7 @@ func Up(cfg *models.Config, name string, onNew func(repo, branch string) bool) (
 			log = append(log, i18n.T("log.skip_no_remote", w.Repo, w.Branch))
 			continue
 		}
-		if err := addWorktree(baseRepo, w.Branch, w.Base, abs); err != nil {
+		if err := addWorktreeContext(ctx, baseRepo, w.Branch, w.Base, abs); err != nil {
 			return log, err
 		}
 		log = append(log, i18n.T("log.up", w.Repo, w.Branch, w.Path))
@@ -502,7 +522,9 @@ func Down(cfg *models.Config, name string) ([]string, error) {
 	}
 	var log []string
 	for _, w := range m.Worktrees {
-		removeWorktreeDir(cfg, w.Repo, w.Path)
+		if err := removeWorktreeDir(cfg, w.Repo, w.Path); err != nil {
+			return log, err
+		}
 		log = append(log, i18n.T("log.down", w.Path))
 	}
 	entries, err := os.ReadDir(cfg.FeatureDir(name))
@@ -522,15 +544,21 @@ func Down(cfg *models.Config, name string) ([]string, error) {
 
 // removeWorktreeDir removes a worktree via git, falling back to rm -rf when git
 // doesn't know about it (or the base clone is gone).
-func removeWorktreeDir(cfg *models.Config, repo, relPath string) {
+func removeWorktreeDir(cfg *models.Config, repo, relPath string) error {
 	baseRepo := cfg.BaseRepo(repo)
 	abs := cfg.Abs(relPath)
 	if gitx.IsRepo(baseRepo) {
 		if err := gitx.RemoveWorktree(baseRepo, abs); err == nil {
-			return
+			return nil
 		}
 	}
-	_ = safeRemoveAll(cfg, abs)
+	if err := safeRemoveAll(cfg, abs); err != nil {
+		return err
+	}
+	if gitx.IsRepo(baseRepo) {
+		return gitx.PruneWorktrees(baseRepo)
+	}
+	return nil
 }
 
 // RemoveSpec identifies a single worktree to remove and whether to also delete
@@ -550,8 +578,8 @@ func Remove(cfg *models.Config, name string, spec RemoveSpec) (string, error) {
 		return "", err
 	}
 
-	want := ""
-	if spec.Sub != "" {
+	want := spec.Branch
+	if want == "" && spec.Sub != "" {
 		want = ResolveBranch(m.BranchPrefix(), spec.Sub)
 	}
 
@@ -584,10 +612,8 @@ func Remove(cfg *models.Config, name string, spec RemoveSpec) (string, error) {
 	}
 
 	w := matches[0]
-	if err := RemoveBranchEntry(cfg, m, w, spec.PruneBranch); err != nil {
-		return "", err
-	}
-	if err := manifest.Save(path, m); err != nil {
+	removeErr := RemoveBranchEntry(cfg, m, w, spec.PruneBranch)
+	if err := errors.Join(removeErr, manifest.Save(path, m)); err != nil {
 		return "", err
 	}
 	return i18n.T("log.removed_worktree", w.Path, w.Repo, w.Branch), nil
@@ -596,7 +622,9 @@ func Remove(cfg *models.Config, name string, spec RemoveSpec) (string, error) {
 // RemoveBranchEntry removes a worktree's checkout, drops it from m (in memory),
 // and optionally deletes its local branch. The caller saves the manifest.
 func RemoveBranchEntry(cfg *models.Config, m *models.Manifest, w models.Worktree, prune bool) error {
-	removeWorktreeDir(cfg, w.Repo, w.Path)
+	if err := removeWorktreeDir(cfg, w.Repo, w.Path); err != nil {
+		return err
+	}
 	idx := m.Find(w.Repo, w.Branch)
 	if idx >= 0 {
 		m.Worktrees = append(m.Worktrees[:idx], m.Worktrees[idx+1:]...)
@@ -604,7 +632,11 @@ func RemoveBranchEntry(cfg *models.Config, m *models.Manifest, w models.Worktree
 	if prune {
 		baseRepo := cfg.BaseRepo(w.Repo)
 		if gitx.IsRepo(baseRepo) {
-			_ = gitx.DeleteBranch(baseRepo, w.Branch)
+			if gitx.HasLocalBranch(baseRepo, w.Branch) {
+				if err := gitx.DeleteBranch(baseRepo, w.Branch); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
@@ -628,7 +660,11 @@ func Delete(cfg *models.Config, name string, pruneBranches bool) error {
 		for _, w := range m.Worktrees {
 			baseRepo := cfg.BaseRepo(w.Repo)
 			if gitx.IsRepo(baseRepo) {
-				_ = gitx.DeleteBranch(baseRepo, w.Branch)
+				if gitx.HasLocalBranch(baseRepo, w.Branch) {
+					if err := gitx.DeleteBranch(baseRepo, w.Branch); err != nil {
+						return err
+					}
+				}
 			}
 		}
 	}
@@ -696,7 +732,10 @@ func DeleteWalk(cfg *models.Config, name string, plan []RepoTeardown) ([]string,
 		}
 
 		if p.DeleteBranch {
-			if isRepo && gitx.DeleteBranch(baseRepo, p.Branch) == nil {
+			if isRepo && gitx.HasLocalBranch(baseRepo, p.Branch) {
+				if err := gitx.DeleteBranch(baseRepo, p.Branch); err != nil {
+					return log, err
+				}
 				log = append(log, i18n.T("log.delwalk.branch", p.Repo, p.Branch))
 			}
 		} else {
@@ -802,7 +841,7 @@ func ApplyEdit(cfg *models.Config, pd *models.ProjectDef, name, description stri
 	}
 
 	for _, spec := range adds {
-		wt, err := provision(cfg, pd, m, spec)
+		wt, err := provisionContext(context.Background(), cfg, pd, m, spec)
 		if err != nil {
 			_ = manifest.Save(path, m) // record the worktrees already provisioned
 			return res, err
@@ -825,14 +864,18 @@ func ApplyEdit(cfg *models.Config, pd *models.ProjectDef, name, description stri
 // manual checkout. Repo/Branch are best-effort (Repo "" when the dir doesn't map
 // to a known base repo).
 type Orphan struct {
-	Repo, Branch, Base, Path, Abs string
+	Repo   string `json:"repo"`
+	Branch string `json:"branch"`
+	Base   string `json:"base"`
+	Path   string `json:"path"`
+	Abs    string `json:"abs"`
 }
 
 // DiagnoseResult reports a feature's drift between its manifest and reality.
 type DiagnoseResult struct {
-	Feature string
-	Orphans []Orphan          // on disk under the feature dir, NOT in the manifest
-	Missing []models.Worktree // in the manifest, with NO checkout on disk
+	Feature string            `json:"feature"`
+	Orphans []Orphan          `json:"orphans"` // on disk under the feature dir, NOT in the manifest
+	Missing []models.Worktree `json:"missing"` // in the manifest, with NO checkout on disk
 }
 
 // OK reports whether the feature is in sync.
@@ -927,13 +970,21 @@ func RemoveOrphan(cfg *models.Config, o Orphan) error {
 // RebuildMissing re-creates a manifest worktree whose checkout is gone, pruning any
 // stale registration first; like Up it attaches to the existing branch.
 func RebuildMissing(cfg *models.Config, w models.Worktree) error {
+	return RebuildMissingContext(context.Background(), cfg, w)
+}
+
+// RebuildMissingContext restores one missing checkout with cancellable Git work.
+func RebuildMissingContext(ctx context.Context, cfg *models.Config, w models.Worktree) error {
 	baseRepo := cfg.BaseRepo(w.Repo)
 	if !gitx.IsRepo(baseRepo) {
 		return i18n.Err("err.base_repo_missing", baseRepo)
 	}
 	_ = gitx.PruneWorktrees(baseRepo)
-	gitx.Fetch(baseRepo)
-	return addWorktree(baseRepo, w.Branch, w.Base, cfg.Abs(w.Path))
+	_, _ = gitx.RunContext(ctx, baseRepo, "fetch", "origin", "--prune")
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return addWorktreeContext(ctx, baseRepo, w.Branch, w.Base, cfg.Abs(w.Path))
 }
 
 // DropMissing removes a worktree entry from the manifest (it has no checkout).

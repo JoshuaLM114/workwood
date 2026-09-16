@@ -7,7 +7,7 @@
 # Pin a version instead of the latest tag:
 #   curl -fsSL .../install.sh | WORKWOOD_VERSION=v0.2.0 sh
 #
-# Requires: Go (>=1.25) and git on PATH. Installs into `go env GOBIN` (or
+# Requires: Go (>=1.25.5) and git on PATH. Installs into `go env GOBIN` (or
 # $(go env GOPATH)/bin). No root, no system files touched.
 set -eu
 
@@ -18,7 +18,7 @@ say()  { printf '%s\n' "$*"; }
 die()  { printf 'install: %s\n' "$*" >&2; exit 1; }
 
 command -v go  >/dev/null 2>&1 || die "Go is required but not found on PATH.
-  Install it from https://go.dev/dl/ (>=1.25), then re-run this script."
+  Install it from https://go.dev/dl/ (>=1.25.5), then re-run this script."
 command -v git >/dev/null 2>&1 || die "git is required but not found on PATH."
 
 say "Installing ${MODULE}@${VERSION} …"

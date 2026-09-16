@@ -175,7 +175,7 @@ func RemoveWorktree(repo, abs string) error {
 
 // DeleteBranch force-deletes a local branch (work may be unmerged).
 func DeleteBranch(repo, branch string) error {
-	return run(repo, "branch", "-D", branch)
+	return run(repo, "branch", "-D", "--", branch)
 }
 
 // PruneWorktrees clears stale worktree registrations (after a directory was

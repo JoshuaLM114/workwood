@@ -193,6 +193,9 @@ workwood sf add demo db schema                 # -> branch d/schema
 workwood sf add demo api web                   # 2nd worktree of api -> dir api--web
 workwood sf add demo lib hotfix --no-feature-prefix   # -> raw branch hotfix
 workwood sf add demo db upgrade --from chore/upgrade        # cut from a specific source
+workwood sf add demo api current --base-source origin       # use fetched origin/main
+workwood sf add demo api local --base-source local           # use local main as-is
+workwood sf add demo api updated --base-source pull          # fast-forward local main first
 
 workwood sf status demo         # branch + dirty state per worktree
 workwood sf list                 # all super-features
@@ -216,8 +219,14 @@ stay as they are. See [folder-name review](docs/super-features.md#updating-old-f
 for missing checkouts, Git move restrictions, and recovery behavior.
 
 Creating a new branch rejects names already present locally or on `origin`, or
-already recorded/staged for that repo. Remote refs are refreshed before creation;
-when offline, validation uses the last fetched refs. Use **From an existing branch**
+already recorded/staged for that repo. Workwood requires a successful origin
+fetch before creating it, so a cached remote ref is never silently treated as
+current. The TUI and interactive CLI then offer three starting revisions: the
+latest fetched `origin/<source>`, the local `<source>` as-is, or a fast-forward of
+origin into the local branch followed by the local branch. The CLI flag is
+`--base-source origin|local|pull`; noninteractive calls prefer origin when it
+exists. The chosen policy is committed in the manifest for future rebuilds.
+Use **From an existing branch**
 in the TUI, or `workwood sf add demo api existing-branch --existing`, to explicitly
 attach an existing branch. `--existing` uses the exact branch name without a feature
 prefix and fails if it does not exist. The one hard git rule is
@@ -405,7 +414,7 @@ scripts, no tool-imposed semantics.
 | `workwood repos list` | list base repos + whether they're cloned |
 | `workwood sf create <name> [desc]` | create a super-feature manifest (mints its UUID) |
 | `workwood sf rename <slug> <name>` | set a super-feature's local display name (slug unchanged) |
-| `workwood sf add <name> <repo> <wt-branch> [--from <src>] [--no-feature-prefix] [--existing]` | add a worktree on a new branch, or attach an existing branch explicitly |
+| `workwood sf add <name> <repo> <wt-branch> [--from <src>] [--base-source origin\|local\|pull] [--no-feature-prefix] [--existing]` | add a worktree on a selected local/remote base, or attach an existing branch explicitly |
 | `workwood sf up <name>` | review folder names, then rebuild recorded worktrees |
 | `workwood sf status <name>` | branch + dirty state per worktree |
 | `workwood sf list` | list all super-features |
@@ -482,8 +491,10 @@ content are not translated.
 ## Notes
 
 - A new branch's source defaults to its repo's `default_branch` from
-  `workwood.yml`; override with `--from <source>`. New branches are created
-  `--no-track`, so the source is a starting point, not an upstream.
+  `workwood.yml`; override with `--from <source>`. `--base-source` selects the
+  freshly fetched origin ref, the unchanged local ref, or a fast-forwarded local
+  ref. New branches are created `--no-track`, so the source is a starting point,
+  not an upstream.
 - `add` creates a new branch and rejects existing names. `add --existing` attaches
   an existing local or `origin` branch. `up` reviews outdated folder names before
   rebuilding recorded worktrees and attaches existing branches automatically.

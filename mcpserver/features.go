@@ -31,6 +31,7 @@ type addWorktreeInput struct {
 	Repo            string `json:"repo"`
 	Branch          string `json:"branch" jsonschema:"New branch suffix, or full branch name when existing_branch or no_feature_prefix is true."`
 	From            string `json:"from,omitempty" jsonschema:"Starting ref for a new branch; defaults to the repo default branch."`
+	BaseSource      string `json:"base_source,omitempty" jsonschema:"Starting-ref policy for a new branch: origin, local, or pull. Empty prefers origin when available, otherwise local. pull fast-forwards the local base from origin before use."`
 	NoFeaturePrefix bool   `json:"no_feature_prefix,omitempty"`
 	ExistingBranch  bool   `json:"existing_branch,omitempty" jsonschema:"Explicitly attach an existing local or origin branch instead of creating one."`
 }
@@ -148,7 +149,7 @@ func (s *Server) addFeatureTools() {
 		}
 		return m, nil
 	})
-	addTool(s, "feature_add_worktree", "Add a repo/branch checkout to a feature. Multiple branches of one repo are supported. New names must not already exist; existing_branch attaches explicitly. Fetch is best-effort for offline use; repos_pull verifies source freshness.", network, func(ctx context.Context, in addWorktreeInput) (any, error) {
+	addTool(s, "feature_add_worktree", "Add a repo/branch checkout to a feature. New branch creation requires a successful origin fetch. base_source chooses the fetched origin ref, the local ref, or fast-forwarding origin into local first. Multiple branches of one repo are supported; existing_branch attaches explicitly.", network, func(ctx context.Context, in addWorktreeInput) (any, error) {
 		cfg, pd, m, err := s.feature(in.FeatureInput)
 		if err != nil {
 			return nil, err
@@ -162,7 +163,7 @@ func (s *Server) addFeatureTools() {
 		if !found {
 			return nil, fmt.Errorf("unknown repo %q", in.Repo)
 		}
-		w, err := superfeature.AddContext(ctx, cfg, pd, m.Feature, superfeature.AddSpec{Repo: in.Repo, Sub: in.Branch, From: in.From, OmitFeaturePrefix: in.NoFeaturePrefix, ExistingBranch: in.ExistingBranch})
+		w, err := superfeature.AddContext(ctx, cfg, pd, m.Feature, superfeature.AddSpec{Repo: in.Repo, Sub: in.Branch, From: in.From, BaseSource: in.BaseSource, OmitFeaturePrefix: in.NoFeaturePrefix, ExistingBranch: in.ExistingBranch})
 		if err != nil {
 			return w, err
 		}
@@ -178,7 +179,7 @@ func (s *Server) addFeatureTools() {
 		}
 		return superfeature.Remove(cfg, m.Feature, superfeature.RemoveSpec{Repo: in.Repo, Branch: in.Branch, PruneBranch: in.DeleteBranch})
 	})
-	addTool(s, "feature_up", "Rebuild recorded checkouts. Refuses outdated folder names until feature_folders_apply resolves them. Missing branches are skipped unless create_missing_branches is true. Fetch is best-effort; inspect log for skipped repos/branches.", network, func(ctx context.Context, in struct {
+	addTool(s, "feature_up", "Rebuild recorded checkouts. Refuses outdated folder names until feature_folders_apply resolves them. Missing branches are skipped unless create_missing_branches is true. Known branches can rebuild from cached refs offline; inventing a missing branch requires a successful fetch.", network, func(ctx context.Context, in struct {
 		FeatureInput
 		CreateMissingBranches bool `json:"create_missing_branches,omitempty"`
 	}) (any, error) {

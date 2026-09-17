@@ -229,10 +229,68 @@ type AddSpec struct {
 	Repo string // base repo name (which clone to cut the worktree from)
 	Sub  string // worktree-branch-name (the part after <feature>/)
 	From string // source branch a NEW branch is cut from ("" → repo default)
+	// BaseSource chooses whether a new branch starts from origin/<base>, the local
+	// base branch, or the local branch after a fast-forward from origin.
+	BaseSource string
 	// OmitFeaturePrefix drops the <feature>/ prefix, yielding the raw <sub> as
 	// the branch instead of <feature>/<sub>.
 	OmitFeaturePrefix bool
 	ExistingBranch    bool // attach to Sub verbatim; the branch must already exist
+}
+
+const (
+	BaseSourceOrigin = "origin"
+	BaseSourceLocal  = "local"
+	BaseSourcePull   = "pull"
+)
+
+// BaseStatus describes the available starting refs after a successful fetch.
+type BaseStatus struct {
+	Base         string `json:"base"`
+	LocalExists  bool   `json:"local_exists"`
+	OriginExists bool   `json:"origin_exists"`
+	LocalAhead   int    `json:"local_ahead"`
+	LocalBehind  int    `json:"local_behind"`
+}
+
+// InspectBaseContext fetches origin strictly, then reports the local and remote
+// starting refs for a proposed new branch. It does not pull or create refs.
+func InspectBaseContext(ctx context.Context, cfg *models.Config, pd *models.ProjectDef, spec AddSpec) (BaseStatus, error) {
+	baseRepo := cfg.BaseRepo(spec.Repo)
+	if !gitx.IsRepo(baseRepo) {
+		return BaseStatus{}, i18n.Err("err.base_repo_missing", baseRepo)
+	}
+	base := addBase(pd, spec)
+	if base != "HEAD" && !gitx.ValidBranchName(baseRepo, base) {
+		return BaseStatus{Base: base}, i18n.Err("err.invalid_branch", base)
+	}
+	if _, err := gitx.RunContext(ctx, baseRepo, "fetch", "origin", "--prune"); err != nil {
+		return BaseStatus{Base: base}, i18n.Errw(err, "err.branch_fetch_failed", spec.Repo)
+	}
+	status := inspectBaseRefs(baseRepo, base)
+	return status, nil
+}
+
+func inspectBaseRefs(baseRepo, base string) BaseStatus {
+	status := BaseStatus{Base: base, LocalExists: base == "HEAD" || gitx.HasLocalBranch(baseRepo, base), OriginExists: base != "HEAD" && gitx.HasRemoteBranch(baseRepo, base)}
+	if status.LocalExists && status.OriginExists {
+		status.LocalAhead, status.LocalBehind, _ = gitx.AheadBehindRefs(baseRepo, base, "origin/"+base)
+	}
+	return status
+}
+
+func addBase(pd *models.ProjectDef, spec AddSpec) string {
+	if spec.From != "" {
+		return spec.From
+	}
+	if base := pd.DefaultBranch(spec.Repo); base != "" {
+		return base
+	}
+	return "HEAD"
+}
+
+func validBaseSource(source string) bool {
+	return source == BaseSourceOrigin || source == BaseSourceLocal || source == BaseSourcePull
 }
 
 // ValidateAdd checks a proposed addition against the manifest and current refs.
@@ -308,20 +366,34 @@ func provisionContext(ctx context.Context, cfg *models.Config, pd *models.Projec
 		return models.Worktree{}, i18n.Err("err.base_repo_missing", baseRepo)
 	}
 
-	// Where a NEW branch starts from: explicit --from, else the repo's configured
-	// default_branch, else HEAD. (Ignored when attaching to an existing branch.)
-	base := spec.From
-	if base == "" {
-		base = pd.DefaultBranch(spec.Repo)
+	base := addBase(pd, spec)
+	baseSource := spec.BaseSource
+	if spec.ExistingBranch {
+		baseSource = ""
 	}
-	if base == "" {
-		base = "HEAD"
-	}
-
-	// Refresh remote refs before checking names and resolving the source.
-	_, _ = gitx.RunContext(ctx, baseRepo, "fetch", "origin", "--prune")
-	if err := ctx.Err(); err != nil {
-		return models.Worktree{}, err
+	var status BaseStatus
+	var err error
+	if spec.ExistingBranch {
+		// Existing-branch attachment stays available offline and uses refreshed
+		// refs when possible. Strict freshness applies when inventing a new branch.
+		_, _ = gitx.RunContext(ctx, baseRepo, "fetch", "origin", "--prune")
+		if err := ctx.Err(); err != nil {
+			return models.Worktree{}, err
+		}
+	} else {
+		if baseSource != "" && !validBaseSource(baseSource) {
+			return models.Worktree{}, i18n.Err("err.invalid_base_source", baseSource)
+		}
+		status, err = InspectBaseContext(ctx, cfg, pd, spec)
+		if err != nil {
+			return models.Worktree{}, err
+		}
+		if baseSource == "" {
+			baseSource = BaseSourceLocal
+			if status.OriginExists {
+				baseSource = BaseSourceOrigin
+			}
+		}
 	}
 
 	if err := ValidateAdd(cfg, m, spec); err != nil {
@@ -330,7 +402,6 @@ func provisionContext(ctx context.Context, cfg *models.Config, pd *models.Projec
 
 	rel := allocPath(cfg, m, spec.Repo, branch)
 	abs := cfg.Abs(rel)
-	var err error
 	if spec.ExistingBranch {
 		if gitx.HasLocalBranch(baseRepo, branch) {
 			_, err = gitx.RunContext(ctx, baseRepo, "worktree", "add", "--", abs, branch)
@@ -338,21 +409,60 @@ func provisionContext(ctx context.Context, cfg *models.Config, pd *models.Projec
 			_, err = gitx.RunContext(ctx, baseRepo, "worktree", "add", "--track", "-b", branch, "--", abs, "origin/"+branch)
 		}
 	} else {
-		baseref := base
-		if gitx.HasRemoteBranch(baseRepo, base) {
-			baseref = "origin/" + base
+		baseref, baseErr := resolveBaseRefContext(ctx, baseRepo, spec.Repo, status, baseSource)
+		if baseErr != nil {
+			return models.Worktree{}, baseErr
 		}
 		_, err = gitx.RunContext(ctx, baseRepo, "worktree", "add", "--no-track", "-b", branch, "--", abs, baseref)
 	}
 	if err != nil {
 		return models.Worktree{}, err
 	}
-	return models.Worktree{Repo: spec.Repo, Branch: branch, Base: base, Path: rel}, nil
+	return models.Worktree{Repo: spec.Repo, Branch: branch, Base: base, BaseSource: baseSource, Path: rel}, nil
+}
+
+func resolveBaseRefContext(ctx context.Context, baseRepo, repo string, status BaseStatus, source string) (string, error) {
+	if source == "" { // manifests written before base_source used remote when available
+		if status.OriginExists {
+			return "origin/" + status.Base, nil
+		}
+		source = BaseSourceLocal
+	}
+	switch source {
+	case BaseSourceOrigin:
+		if !status.OriginExists {
+			return "", i18n.Err("err.origin_base_missing", status.Base, repo)
+		}
+		return "origin/" + status.Base, nil
+	case BaseSourceLocal:
+		if !status.LocalExists {
+			return "", i18n.Err("err.local_base_missing", status.Base, repo)
+		}
+		return status.Base, nil
+	case BaseSourcePull:
+		if !status.OriginExists {
+			return "", i18n.Err("err.origin_base_missing", status.Base, repo)
+		}
+		var err error
+		if status.LocalExists {
+			if _, err = gitx.RunContext(ctx, baseRepo, "checkout", status.Base); err == nil {
+				_, err = gitx.RunContext(ctx, baseRepo, "merge", "--ff-only", "origin/"+status.Base)
+			}
+		} else {
+			_, err = gitx.RunContext(ctx, baseRepo, "checkout", "--track", "-b", status.Base, "origin/"+status.Base)
+		}
+		if err != nil {
+			return "", i18n.Errw(err, "err.pull_base_failed", status.Base, repo)
+		}
+		return status.Base, nil
+	default:
+		return "", i18n.Err("err.invalid_base_source", source)
+	}
 }
 
 // addWorktreeContext attaches to whichever branch source exists, in priority order:
 // local branch → origin branch → a new branch cut from base (--no-track).
-func addWorktreeContext(ctx context.Context, baseRepo, branch, base, abs string) error {
+func addWorktreeContext(ctx context.Context, baseRepo, repo, branch, base, baseSource, abs string) error {
 	switch {
 	case gitx.HasLocalBranch(baseRepo, branch):
 		_, err := gitx.RunContext(ctx, baseRepo, "worktree", "add", "--", abs, branch)
@@ -361,11 +471,12 @@ func addWorktreeContext(ctx context.Context, baseRepo, branch, base, abs string)
 		_, err := gitx.RunContext(ctx, baseRepo, "worktree", "add", "--track", "-b", branch, "--", abs, "origin/"+branch)
 		return err
 	default:
-		baseref := base
-		if gitx.HasRemoteBranch(baseRepo, base) {
-			baseref = "origin/" + base
+		status := inspectBaseRefs(baseRepo, base)
+		baseref, err := resolveBaseRefContext(ctx, baseRepo, repo, status, baseSource)
+		if err != nil {
+			return err
 		}
-		_, err := gitx.RunContext(ctx, baseRepo, "worktree", "add", "--no-track", "-b", branch, "--", abs, baseref)
+		_, err = gitx.RunContext(ctx, baseRepo, "worktree", "add", "--no-track", "-b", branch, "--", abs, baseref)
 		return err
 	}
 }
@@ -489,19 +600,20 @@ func UpContext(ctx context.Context, cfg *models.Config, name string, onNew func(
 			log = append(log, i18n.T("log.exists", w.Path))
 			continue
 		}
-		_, _ = gitx.RunContext(ctx, baseRepo, "fetch", "origin", "--prune")
+		_, fetchErr := gitx.RunContext(ctx, baseRepo, "fetch", "origin", "--prune")
 		if err := ctx.Err(); err != nil {
 			return log, err
 		}
+		creating := !gitx.HasLocalBranch(baseRepo, w.Branch) && !gitx.HasRemoteBranch(baseRepo, w.Branch)
+		if creating && fetchErr != nil {
+			return log, i18n.Errw(fetchErr, "err.branch_fetch_failed", w.Repo)
+		}
 		// No existing branch anywhere → this would create a new local branch.
-		if onNew != nil &&
-			!gitx.HasLocalBranch(baseRepo, w.Branch) &&
-			!gitx.HasRemoteBranch(baseRepo, w.Branch) &&
-			!onNew(w.Repo, w.Branch) {
+		if onNew != nil && creating && !onNew(w.Repo, w.Branch) {
 			log = append(log, i18n.T("log.skip_no_remote", w.Repo, w.Branch))
 			continue
 		}
-		if err := addWorktreeContext(ctx, baseRepo, w.Branch, w.Base, abs); err != nil {
+		if err := addWorktreeContext(ctx, baseRepo, w.Repo, w.Branch, w.Base, w.BaseSource, abs); err != nil {
 			return log, err
 		}
 		log = append(log, i18n.T("log.up", w.Repo, w.Branch, w.Path))
@@ -980,11 +1092,14 @@ func RebuildMissingContext(ctx context.Context, cfg *models.Config, w models.Wor
 		return i18n.Err("err.base_repo_missing", baseRepo)
 	}
 	_ = gitx.PruneWorktrees(baseRepo)
-	_, _ = gitx.RunContext(ctx, baseRepo, "fetch", "origin", "--prune")
+	_, fetchErr := gitx.RunContext(ctx, baseRepo, "fetch", "origin", "--prune")
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return addWorktreeContext(ctx, baseRepo, w.Branch, w.Base, cfg.Abs(w.Path))
+	if fetchErr != nil && !gitx.HasLocalBranch(baseRepo, w.Branch) && !gitx.HasRemoteBranch(baseRepo, w.Branch) {
+		return i18n.Errw(fetchErr, "err.branch_fetch_failed", w.Repo)
+	}
+	return addWorktreeContext(ctx, baseRepo, w.Repo, w.Branch, w.Base, w.BaseSource, cfg.Abs(w.Path))
 }
 
 // DropMissing removes a worktree entry from the manifest (it has no checkout).

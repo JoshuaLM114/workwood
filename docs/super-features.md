@@ -15,6 +15,9 @@ workwood sf add demo web ui              # worktree of web on branch  d/ui
 workwood sf add demo lib hotfix --no-feature-prefix      # raw branch "hotfix"
 workwood sf add demo api existing-branch --existing      # attach the exact branch
 workwood sf add demo db upgrade --from chore/upgrade           # cut from a specific source
+workwood sf add demo api current --base-source origin          # latest fetched origin/main
+workwood sf add demo api local --base-source local              # local main as-is
+workwood sf add demo api updated --base-source pull             # update local main first
 
 workwood sf status demo    # branch + dirty state per worktree
 workwood sf list            # all features
@@ -34,15 +37,25 @@ workwood sf rename demo "Demo work"   # your LOCAL display name; slug/branches u
   names gain `--2`, `--3`, and so on. Existing numeric suffixes remain valid.
   Older names are reviewed when opening a feature in the TUI or running `sf up`.
 - New branch names must be valid Git branch names and absent from local/origin
-  refs and the feature's recorded or staged worktrees for that repo. Branch refs
-  are refreshed before creation; offline checks use the last fetched refs. A ref
+  refs and the feature's recorded or staged worktrees for that repo. Creating a
+  branch requires a successful `git fetch origin --prune`; a network or
+  authentication failure stops before any branch, worktree, or manifest change.
+  A ref
   `x` cannot coexist with `x/y` — `add` also guards that.
+- After fetching, choose how to resolve the source branch (`--from`, or the repo's
+  default): **origin** creates from the latest fetched `origin/<source>` without
+  changing the base clone; **local** uses the local branch tip as-is; **pull**
+  checks out the local source and fast-forwards it from origin before use. A
+  diverged local branch makes `pull` fail instead of merging or resetting it. The
+  TUI and interactive CLI prompt for this choice. Scripts and MCP calls can set
+  `--base-source origin|local|pull` / `base_source`; an omitted choice prefers
+  origin when present and otherwise local.
 - `sf add ... --existing` explicitly attaches the supplied branch verbatim. It
   requires an existing local or origin branch; it never invents a missing branch.
 - In the **TUI** editor, **`a`** (add a worktree) first asks for the repo and a
   **Create a new branch / From an existing branch** choice. *New* then collects the
-  branch name, placement, and source (the CLI's `<sub>` / `--no-feature-prefix` /
-  `--from`). *From existing* lists the repo's branches (each tagged local / remote /
+  branch name, placement, source, and starting-revision policy (the CLI's `<sub>` /
+  `--no-feature-prefix` / `--from` / `--base-source`). *From existing* lists the repo's branches (each tagged local / remote /
   both) and checks the chosen one out **directly** — a remote-only branch becomes a
   local branch **tracking** it (no `<feature>/` prefix). The dropdown is refreshed by
   a `git fetch` when opened. (Git allows only one worktree per branch, so picking a

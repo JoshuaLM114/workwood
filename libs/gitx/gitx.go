@@ -86,6 +86,25 @@ func AheadBehind(dir string) (ahead, behind int, ok bool) {
 	return ahead, behind, true
 }
 
+// AheadBehindRefs reports how many commits local is ahead of and behind remote.
+// ok is false when either ref cannot be compared.
+func AheadBehindRefs(dir, local, remote string) (ahead, behind int, ok bool) {
+	out, err := output(dir, "rev-list", "--left-right", "--count", local+"..."+remote)
+	if err != nil {
+		return 0, 0, false
+	}
+	fields := strings.Fields(out)
+	if len(fields) != 2 {
+		return 0, 0, false
+	}
+	ahead, err = strconv.Atoi(fields[0])
+	if err != nil {
+		return 0, 0, false
+	}
+	behind, err = strconv.Atoi(fields[1])
+	return ahead, behind, err == nil
+}
+
 // LocalBranches lists short names of every local branch in repo.
 func LocalBranches(repo string) ([]string, error) {
 	out, err := output(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads")

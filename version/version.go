@@ -30,7 +30,9 @@ var Software = "0.1.0"
 // v2: identity refactor — projects + super-features carry UUIDs, per-developer
 // state moved into an external WORKWOOD_DATA/<project-uuid>/workwood-state.yml,
 // and the global config dropped its project registry for app-settings only.
-const Schema = 2
+// v3: worktree manifests record the selected local/origin base-source policy so
+// a missing branch is rebuilt from the same source the user chose originally.
+const Schema = 3
 
 func init() {
 	// go install stamps the resolved module version into the build info (e.g.

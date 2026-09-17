@@ -85,6 +85,7 @@ type addVals struct {
 	fromExisting bool   // phase 1: false = new branch, true = check out an existing one
 	sub          string // new-branch name (the part after <feature>/)
 	from         string // new-branch source ref
+	baseSource   string // origin, local, or pull origin into local
 	omitPrefix   bool   // new-branch placement: drop the <feature>/ prefix
 	branch       string // chosen existing branch (fromExisting)
 }
@@ -122,7 +123,13 @@ func newAddModeForm(repos []string, v *addVals) *huh.Form {
 // newAddForm is phase 2 for a NEW branch: its name, placement, and source ref.
 // feature is the branch prefix, used to preview the exact branch each
 // placement choice produces.
-func newAddForm(feature string, v *addVals, validate func(string, bool) error) *huh.Form {
+func newAddForm(feature, defaultBase string, status superfeature.BaseStatus, v *addVals, validate func(string, bool) error) *huh.Form {
+	if v.baseSource == "" {
+		v.baseSource = superfeature.BaseSourceLocal
+		if status.OriginExists {
+			v.baseSource = superfeature.BaseSourceOrigin
+		}
+	}
 	return form(
 		huh.NewGroup(
 			huh.NewInput().
@@ -156,6 +163,22 @@ func newAddForm(feature string, v *addVals, validate func(string, bool) error) *
 				Title(i18n.T("tui.form.source")).
 				Description(i18n.T("tui.form.source_desc")).
 				Value(&v.from),
+			huh.NewSelect[string]().
+				Key("baseSource").
+				Title(i18n.T("tui.form.base_source")).
+				Description(i18n.T("tui.form.base_source_desc", defaultBase, status.LocalAhead, status.LocalBehind)).
+				OptionsFunc(func() []huh.Option[string] {
+					base := strings.TrimSpace(v.from)
+					if base == "" {
+						base = defaultBase
+					}
+					return []huh.Option[string]{
+						huh.NewOption(i18n.T("tui.form.base_origin", base), superfeature.BaseSourceOrigin),
+						huh.NewOption(i18n.T("tui.form.base_local", base), superfeature.BaseSourceLocal),
+						huh.NewOption(i18n.T("tui.form.base_pull", base), superfeature.BaseSourcePull),
+					}
+				}, &v.from).
+				Value(&v.baseSource),
 		),
 	)
 }

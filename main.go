@@ -691,10 +691,22 @@ func runFeature(projectFlag string, args []string) error {
 			from = pos[3]
 		}
 		omit := hasFlag(flags, "no-feature-prefix", "strip-feature")
-		wt, err := superfeature.Add(cfg, pd, pos[0], superfeature.AddSpec{
+		spec := superfeature.AddSpec{
 			Repo: pos[1], Sub: pos[2], From: from, OmitFeaturePrefix: omit,
 			ExistingBranch: hasFlag(flags, "existing"),
-		})
+			BaseSource:     flags["base-source"],
+		}
+		if !spec.ExistingBranch && spec.BaseSource == "" {
+			status, inspectErr := superfeature.InspectBaseContext(context.Background(), cfg, pd, spec)
+			if inspectErr != nil {
+				return inspectErr
+			}
+			spec.BaseSource, err = promptBaseSource(bufio.NewScanner(os.Stdin), os.Stdout, status)
+			if err != nil {
+				return err
+			}
+		}
+		wt, err := superfeature.Add(cfg, pd, pos[0], spec)
 		if err != nil {
 			return err
 		}
@@ -975,7 +987,7 @@ func renameFeature(cfg *models.Config, slug, newName string) error {
 // positional args. Boolean flags map to "".
 func splitFlags(args []string) (pos []string, flags map[string]string) {
 	flags = map[string]string{}
-	valueFlags := map[string]bool{"from": true, "source": true, "name": true, "targets": true, "shorthand": true, "data-dir": true}
+	valueFlags := map[string]bool{"from": true, "source": true, "base-source": true, "name": true, "targets": true, "shorthand": true, "data-dir": true}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if len(a) > 2 && a[:2] == "--" {
@@ -1050,6 +1062,50 @@ func confirmNewBranch(sc *bufio.Scanner, out io.Writer, repo, branch string) boo
 		return true
 	default:
 		return false
+	}
+}
+
+type baseSourceChoice struct {
+	value string
+	label string
+}
+
+// promptBaseSource asks which freshly inspected ref should seed a new branch.
+// EOF selects the first available option, keeping non-interactive CLI use stable.
+func promptBaseSource(sc *bufio.Scanner, out io.Writer, status superfeature.BaseStatus) (string, error) {
+	choices := []baseSourceChoice{}
+	if status.OriginExists {
+		choices = append(choices, baseSourceChoice{superfeature.BaseSourceOrigin, i18n.T("sf.base_origin", status.Base)})
+	}
+	if status.LocalExists {
+		choices = append(choices, baseSourceChoice{superfeature.BaseSourceLocal, i18n.T("sf.base_local", status.Base)})
+	}
+	if status.OriginExists {
+		choices = append(choices, baseSourceChoice{superfeature.BaseSourcePull, i18n.T("sf.base_pull", status.Base)})
+	}
+	if len(choices) == 0 {
+		return "", i18n.Err("err.no_base_ref", status.Base)
+	}
+	fmt.Fprintln(out, i18n.T("sf.base_status", status.Base, status.LocalAhead, status.LocalBehind))
+	for i, choice := range choices {
+		fmt.Fprintf(out, "  %d) %s\n", i+1, choice.label)
+	}
+	for {
+		fmt.Fprint(out, i18n.T("sf.base_prompt", 1))
+		if !sc.Scan() {
+			fmt.Fprintln(out)
+			return choices[0].value, nil
+		}
+		answer := strings.TrimSpace(sc.Text())
+		if answer == "" {
+			return choices[0].value, nil
+		}
+		for i, choice := range choices {
+			if answer == fmt.Sprint(i+1) || strings.EqualFold(answer, choice.value) {
+				return choice.value, nil
+			}
+		}
+		fmt.Fprintln(out, i18n.T("sf.base_invalid"))
 	}
 }
 

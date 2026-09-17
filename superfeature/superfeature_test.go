@@ -211,6 +211,7 @@ func TestCreateUsesShorthandForBranch(t *testing.T) {
 	mk(t, filepath.Join(mainDir, "svc"))
 	git(t, filepath.Join(mainDir, "svc"), "init", "-q", "-b", "main")
 	git(t, filepath.Join(mainDir, "svc"), "commit", "-q", "--allow-empty", "-m", "init")
+	git(t, filepath.Join(mainDir, "svc"), "remote", "add", "origin", filepath.Join(mainDir, "svc"))
 
 	repoRoot := filepath.Join(root, "super")
 	mk(t, repoRoot)
@@ -501,6 +502,7 @@ func TestDiagnoseAdoptMissing(t *testing.T) {
 	mk(t, filepath.Join(mainDir, "svc"))
 	git(t, filepath.Join(mainDir, "svc"), "init", "-q", "-b", "main")
 	git(t, filepath.Join(mainDir, "svc"), "commit", "-q", "--allow-empty", "-m", "init")
+	git(t, filepath.Join(mainDir, "svc"), "remote", "add", "origin", filepath.Join(mainDir, "svc"))
 
 	repoRoot := filepath.Join(root, "super")
 	mk(t, repoRoot)
@@ -580,6 +582,7 @@ func TestApplyEditPersistsPartial(t *testing.T) {
 	mk(t, filepath.Join(mainDir, "svc"))
 	git(t, filepath.Join(mainDir, "svc"), "init", "-q", "-b", "main")
 	git(t, filepath.Join(mainDir, "svc"), "commit", "-q", "--allow-empty", "-m", "init")
+	git(t, filepath.Join(mainDir, "svc"), "remote", "add", "origin", filepath.Join(mainDir, "svc"))
 
 	repoRoot := filepath.Join(root, "super")
 	mk(t, repoRoot)

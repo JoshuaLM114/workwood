@@ -50,7 +50,7 @@ func TestNewBranchFormValidatesSelectedPlacement(t *testing.T) {
 	i18n.Init("en")
 	v := addVals{repo: "api", sub: "topic"}
 	var checked []bool
-	f := newAddForm("d", &v, func(sub string, omit bool) error {
+	f := newAddForm("d", "main", superfeature.BaseStatus{Base: "main", LocalExists: true, OriginExists: true}, &v, func(sub string, omit bool) error {
 		require.Equal(t, "topic", sub)
 		checked = append(checked, omit)
 		if !omit {
@@ -80,7 +80,17 @@ func TestNewBranchModeOpensValidatedFormAfterFetch(t *testing.T) {
 		man:     &models.Manifest{Feature: "demo", Shorthand: "d"},
 		addVals: addVals{repo: "api"}, width: 100,
 	}
-	_, _ = e.Update(editorBranchesMsg{repo: "api"})
+	_, _ = e.Update(editorBranchesMsg{repo: "api", base: superfeature.BaseStatus{Base: "main", LocalExists: true, OriginExists: true}})
 	require.Equal(t, formAdd, e.formMode)
 	require.NotNil(t, e.form)
+	require.Equal(t, superfeature.BaseSourceOrigin, e.addVals.baseSource)
+}
+
+func TestNewBranchFetchFailureStopsBeforeForm(t *testing.T) {
+	i18n.Init("en")
+	e := EditorModel{addVals: addVals{repo: "api"}, width: 100}
+	_, _ = e.Update(editorBranchesMsg{repo: "api", err: os.ErrNotExist})
+	require.Equal(t, formNone, e.formMode)
+	require.Nil(t, e.form)
+	require.Contains(t, e.status, os.ErrNotExist.Error())
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,6 +163,31 @@ func TestFeatureWorkflow(t *testing.T) {
 	call(t, c, "feature_delete", map[string]any{"feature": "login", "delete_branches": false}, false)
 	require.NoFileExists(t, cfg.ManifestPath("login"))
 	require.Contains(t, git(t, cfg.BaseRepo("api"), "branch", "--list"), "sf/fix-login")
+}
+
+func TestFeatureAddSelectsBranchBase(t *testing.T) {
+	_, c, cfg, upstream := fixture(t)
+	call(t, c, "feature_create", map[string]any{"name": "bases", "shorthand": "bs"}, false)
+	localTip := strings.TrimSpace(git(t, cfg.BaseRepo("api"), "rev-parse", "main"))
+	git(t, upstream, "commit", "-q", "--allow-empty", "-m", "remote advance")
+	originTip := strings.TrimSpace(git(t, upstream, "rev-parse", "main"))
+
+	type addResult struct {
+		Worktree models.Worktree `json:"worktree"`
+	}
+	local := decode[addResult](t, call(t, c, "feature_add_worktree", map[string]any{"feature": "bases", "repo": "api", "branch": "local", "base_source": "local"}, false))
+	require.Equal(t, "local", local.Worktree.BaseSource)
+	require.Equal(t, localTip, strings.TrimSpace(git(t, cfg.Abs(local.Worktree.Path), "rev-parse", "HEAD")))
+	require.Equal(t, localTip, strings.TrimSpace(git(t, cfg.BaseRepo("api"), "rev-parse", "main")))
+
+	origin := decode[addResult](t, call(t, c, "feature_add_worktree", map[string]any{"feature": "bases", "repo": "api", "branch": "origin", "base_source": "origin"}, false))
+	require.Equal(t, originTip, strings.TrimSpace(git(t, cfg.Abs(origin.Worktree.Path), "rev-parse", "HEAD")))
+	require.Equal(t, localTip, strings.TrimSpace(git(t, cfg.BaseRepo("api"), "rev-parse", "main")))
+
+	pulled := decode[addResult](t, call(t, c, "feature_add_worktree", map[string]any{"feature": "bases", "repo": "api", "branch": "pulled", "base_source": "pull"}, false))
+	require.Equal(t, originTip, strings.TrimSpace(git(t, cfg.Abs(pulled.Worktree.Path), "rev-parse", "HEAD")))
+	require.Equal(t, originTip, strings.TrimSpace(git(t, cfg.BaseRepo("api"), "rev-parse", "main")))
+	call(t, c, "feature_add_worktree", map[string]any{"feature": "bases", "repo": "api", "branch": "bad", "base_source": "invalid"}, true)
 }
 
 func TestFoldersAndRepair(t *testing.T) {

@@ -129,13 +129,19 @@ different project. Data-directory precedence is: feature back-link, explicit
      "project": "<project-uuid>",
      "feature": "login",
      "repo": "api",
-     "branch": "fix-login"
+     "branch": "fix-login",
+     "base_source": "origin"
    }
    ```
 
    For shorthand `sf`, this creates branch `sf/fix-login` in `api--fix-login`.
    Additional branches of `api` get separate folders. A new branch name must not
-   already exist. To attach an existing branch, set `existing_branch: true` and
+   already exist. New branch creation requires a successful origin fetch.
+   `base_source` accepts `origin` (latest fetched remote ref), `local` (unchanged
+   local ref), or `pull` (fast-forward origin into local, then use local). When
+   omitted, origin is preferred when available, otherwise local. A failed fetch
+   or non-fast-forward pull fails without creating the branch. To attach an
+   existing branch, set `existing_branch: true` and
    supply its full name. `no_feature_prefix: true` creates a literal new name.
 5. Use `feature_get` to find the absolute checkout paths. Edit those worktrees;
    base clones are reference scaffolding.
@@ -223,9 +229,11 @@ branch deletion can discard unmerged commits. Inspect `feature_get` first.
   `timeout_seconds` defaults to 300 and accepts 1–3600. Git synchronization and
   action commands support request cancellation; Unix cancellation terminates
   their process group. Cancellation does not roll back effects already applied.
-- Feature creation/rebuilding fetches refs best-effort for offline use, as the
-  CLI does. Use `repos_pull` or `repos_fetch` when remote freshness is required;
-  these report network and Git failures.
+- New branch creation requires a successful origin fetch. Existing-branch
+  attachment remains available from known local refs when offline. Rebuilding a
+  missing checkout also refuses to invent a new branch after a failed fetch.
+  Use `repos_pull` to fast-forward all base clones or `base_source: pull` to
+  fast-forward the selected source before one branch is created.
 - Calls are serialized within each server process to protect local state and
   action context files. Avoid simultaneous mutations of one project from
   separate workwood processes. Registry writes have their own process lock.

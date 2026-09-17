@@ -2,10 +2,11 @@ package models
 
 // Worktree is one repo+branch checkout belonging to a super-feature.
 type Worktree struct {
-	Repo   string `yaml:"repo" json:"repo"`     // base repo name (dir under main_dir)
-	Branch string `yaml:"branch" json:"branch"` // full branch: <feature>/<sub>
-	Base   string `yaml:"base" json:"base"`     // source a NEW branch is cut from
-	Path   string `yaml:"path" json:"path"`     // features_dir-relative worktree path (<feature>/<dir>)
+	Repo       string `yaml:"repo" json:"repo"`                                   // base repo name (dir under main_dir)
+	Branch     string `yaml:"branch" json:"branch"`                               // full branch: <feature>/<sub>
+	Base       string `yaml:"base" json:"base"`                                   // source branch a NEW branch is cut from
+	BaseSource string `yaml:"base_source,omitempty" json:"base_source,omitempty"` // origin, local, or pull; empty is legacy auto
+	Path       string `yaml:"path" json:"path"`                                   // features_dir-relative worktree path (<feature>/<dir>)
 }
 
 // Manifest is a single super-feature. Vars is a free-form, team-shared bag of

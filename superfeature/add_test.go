@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/JoshuaLM114/workwood/i18n"
+	"github.com/JoshuaLM114/workwood/libs/gitx"
 	"github.com/JoshuaLM114/workwood/manifest"
 	"github.com/JoshuaLM114/workwood/models"
 )
@@ -93,6 +94,81 @@ func TestAddRejectsExistingNewBranch(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestAddNewBranchBaseSource(t *testing.T) {
+	for _, source := range []string{BaseSourceOrigin, BaseSourceLocal, BaseSourcePull} {
+		t.Run(source, func(t *testing.T) {
+			cfg, pd, upstream := addTestProject(t)
+			localBefore := gitOut(t, cfg.BaseRepo("svc"), "rev-parse", "main")
+			require.NoError(t, os.WriteFile(filepath.Join(upstream, "remote.txt"), []byte("new\n"), 0o644))
+			git(t, upstream, "add", "remote.txt")
+			git(t, upstream, "commit", "-q", "-m", "remote advance")
+			originTip := gitOut(t, upstream, "rev-parse", "main")
+
+			status, err := InspectBaseContext(t.Context(), cfg, pd, AddSpec{Repo: "svc"})
+			require.NoError(t, err)
+			require.True(t, status.LocalExists)
+			require.True(t, status.OriginExists)
+			require.Equal(t, 1, status.LocalBehind)
+			require.Zero(t, status.LocalAhead)
+
+			wt, err := AddContext(t.Context(), cfg, pd, "demo", AddSpec{Repo: "svc", Sub: source, BaseSource: source})
+			require.NoError(t, err)
+			require.Equal(t, source, wt.BaseSource)
+			stored, err := manifest.Load(cfg.ManifestPath("demo"))
+			require.NoError(t, err)
+			require.Equal(t, source, stored.Worktrees[0].BaseSource)
+			wantTip := originTip
+			if source == BaseSourceLocal {
+				wantTip = localBefore
+			}
+			require.Equal(t, wantTip, gitOut(t, cfg.Abs(wt.Path), "rev-parse", "HEAD"))
+			localAfter := gitOut(t, cfg.BaseRepo("svc"), "rev-parse", "main")
+			if source == BaseSourcePull {
+				require.Equal(t, originTip, localAfter)
+			} else {
+				require.Equal(t, localBefore, localAfter)
+			}
+			if source == BaseSourceLocal {
+				_, err = Down(cfg, "demo")
+				require.NoError(t, err)
+				require.NoError(t, gitx.DeleteBranch(cfg.BaseRepo("svc"), wt.Branch))
+				_, err = UpContext(t.Context(), cfg, "demo", nil)
+				require.NoError(t, err)
+				require.Equal(t, localBefore, gitOut(t, cfg.Abs(wt.Path), "rev-parse", "HEAD"))
+			}
+		})
+	}
+}
+
+func TestAddNewBranchRequiresSuccessfulFetch(t *testing.T) {
+	cfg, pd, _ := addTestProject(t)
+	base := cfg.BaseRepo("svc")
+	git(t, base, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "missing"))
+	before, err := os.ReadFile(cfg.ManifestPath("demo"))
+	require.NoError(t, err)
+	_, err = AddContext(t.Context(), cfg, pd, "demo", AddSpec{Repo: "svc", Sub: "topic", BaseSource: BaseSourceLocal})
+	require.ErrorContains(t, err, "could not refresh origin")
+	require.False(t, branchExists(base, "d/topic"))
+	after, err := os.ReadFile(cfg.ManifestPath("demo"))
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+}
+
+func TestAddPullRejectsDivergedBase(t *testing.T) {
+	cfg, pd, upstream := addTestProject(t)
+	base := cfg.BaseRepo("svc")
+	require.NoError(t, os.WriteFile(filepath.Join(base, "local.txt"), []byte("local\n"), 0o644))
+	git(t, base, "add", "local.txt")
+	git(t, base, "commit", "-q", "-m", "local advance")
+	require.NoError(t, os.WriteFile(filepath.Join(upstream, "remote.txt"), []byte("remote\n"), 0o644))
+	git(t, upstream, "add", "remote.txt")
+	git(t, upstream, "commit", "-q", "-m", "remote advance")
+
+	_, err := AddContext(t.Context(), cfg, pd, "demo", AddSpec{Repo: "svc", Sub: "topic", BaseSource: BaseSourcePull})
+	require.ErrorContains(t, err, "could not fast-forward")
+	require.False(t, branchExists(base, "d/topic"))
 }
 
 func TestAddExistingBranchMode(t *testing.T) {

@@ -1,6 +1,7 @@
 package menus
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -42,6 +43,8 @@ const (
 type editorBranchesMsg struct {
 	repo     string
 	branches []repos.BranchRef
+	base     superfeature.BaseStatus
+	err      error
 }
 
 // rowKind distinguishes a persisted worktree from one staged for addition.
@@ -262,8 +265,12 @@ func (e *EditorModel) Update(msg tea.Msg) (*EditorModel, tea.Cmd) {
 
 	case editorBranchesMsg:
 		e.busy = false
+		if msg.err != nil {
+			e.status = components.ErrStyle.Render(msg.err.Error())
+			return e, nil
+		}
 		if !e.addVals.fromExisting {
-			e.form = newAddForm(e.man.BranchPrefix(), &e.addVals, func(sub string, omit bool) error {
+			e.form = newAddForm(e.man.BranchPrefix(), msg.base.Base, msg.base, &e.addVals, func(sub string, omit bool) error {
 				return e.validateAdd(superfeature.AddSpec{Repo: e.addVals.repo, Sub: sub, OmitFeaturePrefix: omit})
 			}).WithWidth(min(72, e.width-2))
 			e.formMode = formAdd
@@ -384,9 +391,14 @@ func (e *EditorModel) openAddForm() {
 // existing-branch selection and new-branch validation use refreshed refs.
 func (e *EditorModel) fetchBranchesCmd(repo string) tea.Cmd {
 	base := e.ctx.Cfg.BaseRepo(repo)
+	existing := e.addVals.fromExisting
 	return func() tea.Msg {
-		gitx.Fetch(base)
-		return editorBranchesMsg{repo: repo, branches: repos.Branches(base)}
+		if existing {
+			gitx.Fetch(base)
+			return editorBranchesMsg{repo: repo, branches: repos.Branches(base)}
+		}
+		status, err := superfeature.InspectBaseContext(context.Background(), e.ctx.Cfg, e.ctx.Pd, superfeature.AddSpec{Repo: repo})
+		return editorBranchesMsg{repo: repo, branches: repos.Branches(base), base: status, err: err}
 	}
 }
 
@@ -431,6 +443,7 @@ func (e *EditorModel) onFormDone() tea.Cmd {
 			Repo:              e.addVals.repo,
 			Sub:               sub,
 			From:              strings.TrimSpace(e.addVals.from),
+			BaseSource:        e.addVals.baseSource,
 			OmitFeaturePrefix: e.addVals.omitPrefix,
 		})
 	case formAddExisting:

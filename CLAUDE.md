@@ -62,7 +62,7 @@ workwood project check [path-or-uuid] [--data-dir <path>]   read-only setup repo
 workwood project list | register [path] --data-dir <path> | unregister <uuid>
 workwood repos pull | list                   clone/refresh base repos
 workwood sf create <name> [desc] [--shorthand s]
-workwood sf add <name> <repo> <wt-branch> [--from <src>] [--no-feature-prefix] [--existing]
+workwood sf add <name> <repo> <wt-branch> [--from <src>] [--base-source origin|local|pull] [--no-feature-prefix] [--existing]
 workwood sf up | status | down | delete | relink | doctor [feature]   (feature defaults to cwd)
 workwood sf rename <slug> <new-name>         local display name only
 workwood action <name> [feature] [--targets <preset|file>] [--init]
@@ -74,6 +74,10 @@ workwood project [info] | rename <name>      ·   workwood lang [en|ja]   ·   w
 New branch names must not already exist locally or on origin, or be recorded/staged
 for that repo in the feature. Use `--existing` (CLI) or **From existing** (TUI) to
 attach an existing branch explicitly.
+New branch creation requires a successful origin fetch. Choose `origin` to use
+the fetched remote tip, `local` to use the local source as-is, or `pull` to
+fast-forward origin into local before branching. TUI/interactive CLI prompt;
+MCP uses `base_source`.
 
 ## Hard rules (not preferences)
 

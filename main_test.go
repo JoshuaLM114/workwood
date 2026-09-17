@@ -1,6 +1,16 @@
 package main
 
-import "testing"
+import (
+	"bufio"
+	"bytes"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/JoshuaLM114/workwood/i18n"
+	"github.com/JoshuaLM114/workwood/superfeature"
+)
 
 func eqStrs(t *testing.T, got, want []string, ctx string) {
 	t.Helper()
@@ -15,12 +25,15 @@ func eqStrs(t *testing.T, got, want []string, ctx string) {
 }
 
 func TestSplitFlags(t *testing.T) {
-	pos, flags := splitFlags([]string{"feat", "repo", "--from", "main", "--no-feature-prefix", "--name=x", "extra"})
+	pos, flags := splitFlags([]string{"feat", "repo", "--from", "main", "--base-source", "pull", "--no-feature-prefix", "--name=x", "extra"})
 	eqStrs(t, pos, []string{"feat", "repo", "extra"}, "pos")
 
 	// A value flag in the allowlist consumes the next arg…
 	if flags["from"] != "main" {
 		t.Errorf("--from = %q, want main", flags["from"])
+	}
+	if flags["base-source"] != "pull" {
+		t.Errorf("--base-source = %q, want pull", flags["base-source"])
 	}
 	// …a "=" form binds inline…
 	if flags["name"] != "x" {
@@ -29,6 +42,28 @@ func TestSplitFlags(t *testing.T) {
 	// …and a boolean (non-allowlist) flag is empty and does NOT eat the next arg.
 	if v, ok := flags["no-feature-prefix"]; !ok || v != "" {
 		t.Errorf("--no-feature-prefix = (%q,%v), want (\"\",true)", v, ok)
+	}
+}
+
+func TestPromptBaseSource(t *testing.T) {
+	i18n.Init("en")
+	status := superfeature.BaseStatus{Base: "main", LocalExists: true, OriginExists: true, LocalBehind: 2}
+	for _, tc := range []struct {
+		name, input, want string
+	}{
+		{"origin number", "1\n", superfeature.BaseSourceOrigin},
+		{"local name", "local\n", superfeature.BaseSourceLocal},
+		{"pull number", "3\n", superfeature.BaseSourcePull},
+		{"default", "\n", superfeature.BaseSourceOrigin},
+		{"retry invalid", "x\n2\n", superfeature.BaseSourceLocal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			got, err := promptBaseSource(bufio.NewScanner(strings.NewReader(tc.input)), &out, status)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+			require.Contains(t, out.String(), "2 behind")
+		})
 	}
 }
 
